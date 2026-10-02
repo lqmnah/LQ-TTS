@@ -109,13 +109,12 @@ def handle_job(job: dict, deps: Deps, callbacks: CallbackSender, *, device: str)
         outcome = "failed"
     if outcome == "canceled":
         repo.mark_canceled(job["id"])
-        fresh = repo.get_job_any(job["id"])
-        if fresh is not None and fresh["deleted_at"] is not None:
-            shutil.rmtree(job_dir(deps.data_dir, job["id"]), ignore_errors=True)
-            repo.purge_job(job["id"])
-            log.info("job deleted while running; purged", extra=ctx)
-            return
     fresh = repo.get_job_any(job["id"])
+    if fresh is not None and fresh["deleted_at"] is not None:
+        shutil.rmtree(job_dir(deps.data_dir, job["id"]), ignore_errors=True)
+        repo.purge_job(job["id"])
+        log.info("job deleted while running; purged", extra=ctx)
+        return
     log.info("job finished", extra={"ctx": {**ctx["ctx"], "status": fresh["status"]}})
     if fresh["callback_url"]:
         callbacks.send(fresh["caller"], fresh["callback_url"],

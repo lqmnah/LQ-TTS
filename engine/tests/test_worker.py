@@ -127,3 +127,23 @@ def test_lease_keeper_without_job_keeps_heartbeat_fresh(repo, monkeypatch, tmp_p
     with worker.LeaseKeeper(deps, None, "cpu"):
         time.sleep(0.3)
     assert repo.worker_state()["beat_at"] > before
+def test_job_deleted_during_assembly_is_purged(repo, ready_voice, tmp_path, monkeypatch):
+    from lq_tts_engine import pipeline
+    deps, job = make(repo, ready_voice, tmp_path)
+    original = pipeline.assemble_revision
+    def deleting(*args, **kwargs):
+        repo.delete_job("lq-tts", job["id"])
+        return original(*args, **kwargs)
+    monkeypatch.setattr(pipeline, "assemble_revision", deleting)
+    rec = Recorder()
+    handle_job(job, deps, rec, device="cpu")
+    assert repo.get_job_any(job["id"]) is None and not job_dir(deps.data_dir, job["id"]).exists()
+    assert rec.sent == []
+def test_deleted_job_with_missing_voice_is_purged(repo, ready_voice, tmp_path):
+    deps, job = make(repo, ready_voice, tmp_path)
+    repo.delete_job("lq-tts", job["id"])
+    repo.soft_delete_voice("lq-tts", ready_voice["id"])
+    rec = Recorder()
+    handle_job(job, deps, rec, device="cpu")
+    assert repo.get_job_any(job["id"]) is None and not job_dir(deps.data_dir, job["id"]).exists()
+    assert rec.sent == []
