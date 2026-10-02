@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import re
+import shutil
 import time
 from collections import deque
 from collections.abc import Callable
@@ -111,21 +113,26 @@ def assemble_revision(job: dict, deps: Deps) -> float:
     audio, times = ops.assemble(segments, gaps, sr)
 
     out = revision_dir(deps.data_dir, job["id"], job["revision"])
-    out.mkdir(parents=True, exist_ok=True)
-    raw = out / "raw.wav"
+    staging = out.with_name(out.name + ".tmp")
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True)
+    raw = staging / "raw.wav"
     sf.write(raw, audio, sr, subtype="FLOAT")
-    final_wav = out / "final.wav"
+    final_wav = staging / "final.wav"
     finish.loudnorm(raw, final_wav, settings.loudness_lufs, sr=sr)
     raw.unlink()
     if "mp3" in settings.formats:
-        finish.encode_mp3(final_wav, out / "final.mp3", sr=sr)
+        finish.encode_mp3(final_wav, staging / "final.mp3", sr=sr)
     cues = [Cue(a, b, s["text"]) for s, (a, b) in zip(sentences, times)]
     if "srt" in settings.formats:
-        (out / "subs.srt").write_text(to_srt(cues), encoding="utf-8")
+        (staging / "subs.srt").write_text(to_srt(cues), encoding="utf-8")
     if "vtt" in settings.formats:
-        (out / "subs.vtt").write_text(to_vtt(cues), encoding="utf-8")
+        (staging / "subs.vtt").write_text(to_vtt(cues), encoding="utf-8")
     if "wav" not in settings.formats:
         final_wav.unlink()
+    if out.exists():
+        shutil.rmtree(out)
+    os.replace(staging, out)
     deps.repo.set_sentence_times(job["id"], [(s["idx"], a, b) for s, (a, b) in zip(sentences, times)])
     return len(audio) / sr
 

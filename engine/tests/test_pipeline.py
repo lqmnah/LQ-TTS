@@ -110,3 +110,20 @@ def test_voice_not_ready_fails_job(repo, ready_voice, tmp_path):
     assert run_job(job, deps, should_stop=never) == "failed"
     j = repo.get_job_any(job["id"])
     assert (j["status"], j["error_code"]) == ("failed", "voice_not_ready")
+
+
+def test_failed_assembly_leaves_previous_revision_visible(repo, ready_voice, tmp_path, monkeypatch):
+    deps, job = setup(repo, ready_voice, tmp_path)
+    assert run_job(job, deps, should_stop=never) == "done"
+    assert repo.request_regenerate("lq-tts", job["id"], 1, "Kalimat kedua yang baru.", None) == 2
+    deps.asr.sentence_texts[1] = "Kalimat kedua yang baru."
+    job2 = repo.claim_job()
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("encode failed")
+
+    monkeypatch.setattr("lq_tts_engine.pipeline.finish.encode_mp3", boom)
+    with pytest.raises(RuntimeError, match="encode failed"):
+        run_job(job2, deps, should_stop=never)
+    assert latest_revision(deps.data_dir, job["id"]) == 1
+    assert not revision_dir(deps.data_dir, job["id"], 2).exists()
