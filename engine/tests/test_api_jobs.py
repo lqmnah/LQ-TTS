@@ -118,3 +118,13 @@ def test_disk_full_refuses_new_jobs(cfg, repo, ready_voice):
     full = TestClient(create_app(Config(**{**cfg.__dict__, "min_free_gb": 1e12}), repo))
     r = post_job(full, ready_voice)
     assert r.status_code == 503 and r.json()["error"]["code"] == "disk_full"
+
+
+def test_deleting_voice_removes_its_job_outputs(client, ready_voice, repo, cfg):
+    job_id = post_job(client, ready_voice).json()["id"]
+    work(repo, cfg)
+    folder = job_dir(cfg.data_dir, job_id)
+    assert folder.exists()
+    assert client.delete(f"/v1/voices/{ready_voice['id']}", headers=AUTH).status_code == 204
+    assert not folder.exists() and repo.get_job_any(uuid.UUID(job_id)) is None
+    assert client.get(f"/v1/jobs/{job_id}", headers=AUTH).status_code == 404

@@ -54,6 +54,21 @@ class Repo:
             (voice_id, caller),
         ) is not None
 
+    def delete_voice_cascade(self, caller, voice_id) -> list[Row] | None:
+        """Soft-delete a voice and delete_job every live job made with it, in one transaction."""
+        with self.pool.connection() as conn, conn.transaction():
+            if conn.execute(
+                "UPDATE voices SET deleted_at=now() WHERE id=%s AND caller=%s AND deleted_at IS NULL RETURNING id",
+                (voice_id, caller),
+            ).fetchone() is None:
+                return None
+            return conn.execute(
+                "UPDATE jobs SET deleted_at=now(), cancel_requested = (status='running'), "
+                "status = CASE WHEN status='queued' THEN 'canceled' ELSE status END "
+                "WHERE voice_id=%s AND deleted_at IS NULL RETURNING id, status",
+                (voice_id,),
+            ).fetchall()
+
     def next_voice_to_prepare(self) -> Row | None:
         return self._one(
             "SELECT * FROM voices WHERE status='processing' AND deleted_at IS NULL ORDER BY created_at LIMIT 1"

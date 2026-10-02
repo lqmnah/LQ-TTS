@@ -154,9 +154,14 @@ def create_app(cfg: Config, repo: Repo, *, sse_poll_s: float = 1.0) -> FastAPI:
 
     @app.delete("/v1/voices/{voice_id}", status_code=204)
     def delete_voice(voice_id: uuid.UUID, who: Caller) -> Response:
-        if not repo.soft_delete_voice(who, voice_id):
+        jobs = repo.delete_voice_cascade(who, voice_id)
+        if jobs is None:
             raise ApiError(404, "not_found", "voice not found")
         shutil.rmtree(cfg.data_dir / "voices" / str(voice_id), ignore_errors=True)
+        for job in jobs:
+            if job["status"] != "running":  # the worker purges running jobs when they stop
+                shutil.rmtree(job_dir(cfg.data_dir, job["id"]), ignore_errors=True)
+                repo.purge_job(job["id"])
         return Response(status_code=204)
 
     # ---- health -------------------------------------------------------------

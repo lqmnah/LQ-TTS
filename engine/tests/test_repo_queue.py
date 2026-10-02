@@ -150,3 +150,22 @@ def test_deleted_running_job_is_reclaimed_after_crash(repo, ready_voice):
     claimed = repo.claim_job()
     assert claimed is not None and claimed["id"] == job["id"]
     assert claimed["cancel_requested"] is True and claimed["deleted_at"] is not None
+
+
+def test_delete_voice_cascade_marks_jobs_deleted(repo, ready_voice):
+    done = new_job(repo, ready_voice)
+    assert repo.claim_job()["id"] == done["id"]
+    finish_all(repo, done["id"])
+    running = new_job(repo, ready_voice)
+    assert repo.claim_job()["id"] == running["id"]
+    queued = new_job(repo, ready_voice)
+    assert repo.delete_voice_cascade("other", ready_voice["id"]) is None
+    rows = repo.delete_voice_cascade("lq-tts", ready_voice["id"])
+    assert {r["id"]: r["status"] for r in rows} == {done["id"]: "done", running["id"]: "running",
+                                                     queued["id"]: "canceled"}
+    jobs = {j: repo.get_job_any(j) for j in (done["id"], running["id"], queued["id"])}
+    assert all(j["deleted_at"] is not None for j in jobs.values())
+    assert jobs[running["id"]]["cancel_requested"] and jobs[running["id"]]["status"] == "running"
+    assert jobs[queued["id"]]["status"] == "canceled"
+    assert repo.get_voice_any(ready_voice["id"])["deleted_at"] is not None
+    assert repo.delete_voice_cascade("lq-tts", ready_voice["id"]) is None
