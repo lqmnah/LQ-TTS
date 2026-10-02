@@ -18,6 +18,11 @@ from lq_tts_engine.text.numbers import normalize_for_match
     ("one hundred twenty", "120"),
     ("Satu? Tiga?", "1 3"),
     ("satu tiga", "1 3"),
+    ("twenty-three", "23"),
+    ("twenty-three years", "23 years"),
+    ("25 ribu", "25000"),
+    ("3 juta rupiah", "3000000 rupiah"),
+    ("satu-satunya", "1 satunya"),
 ])
 def test_number_words_become_digits(text, expected):
     assert normalize_for_match(text) == expected
@@ -49,6 +54,14 @@ def test_real_whisper_output_from_pandji_run_passes():
         "Dalam sepuluh menit terakhir, berapa kali lo ngecek HP?",
         "dalam 10 menit terakhir berapa kali lo ngecek hape",
     ) >= PASS_SCORE
+
+
+def test_hyphenated_number_matches_digits():
+    assert score("I am twenty-three.", "I am 23.") >= PASS_SCORE
+
+
+def test_digit_plus_scale_matches_number_words():
+    assert score("Harganya dua puluh lima ribu.", "Harganya 25 ribu.") >= PASS_SCORE
 
 
 def test_regression_mispronounced_sentence_fails():

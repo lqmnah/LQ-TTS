@@ -15,6 +15,9 @@ _FIXED = {"sepuluh": 10, "sebelas": 11, "seratus": 100,
 _GROUP_MULT = {"puluh": 10, "ratus": 100, "hundred": 100}
 _SCALES = {"ribu": 1_000, "juta": 1_000_000, "thousand": 1_000, "million": 1_000_000}
 _FIXED_SCALES = {"seribu": 1_000, "sejuta": 1_000_000}
+_NUMBER_WORDS = frozenset(
+    {*_UNITS, *_FIXED, *_GROUP_MULT, *_SCALES, *_FIXED_SCALES, "belas"}
+)
 _SLANG = {"nggak": "gak", "enggak": "gak", "ngga": "gak", "ga": "gak", "gk": "gak",
           "lu": "lo", "loe": "lo", "gua": "gue", "gw": "gue", "hape": "hp"}
 _TOKEN = re.compile(r"[^\W_]+|[^\w\s]")
@@ -32,8 +35,15 @@ def _numbers_to_digits(tokens: list[str]) -> list[str]:
         total = group = last = 0
         active = last_was_unit = False
 
-    for tok in tokens:
-        if tok in _UNITS:
+    for i, tok in enumerate(tokens):
+        if tok == "-" and active and i + 1 < len(tokens) and tokens[i + 1] in _NUMBER_WORDS:
+            continue
+        # isdecimal, not isdigit: "10²".isdigit() is True but int() rejects it.
+        if tok.isdecimal():
+            flush()
+            group = last = int(tok)
+            active = last_was_unit = True
+        elif tok in _UNITS:
             if last_was_unit:
                 flush()
             group += _UNITS[tok]
