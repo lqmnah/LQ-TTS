@@ -75,6 +75,8 @@ def _numbers_to_digits(tokens: list[str]) -> list[str]:
     return out
 
 
+_THOUSANDS = re.compile(r"\b\d{1,3}(?:[.,]\d{3})+\b")
 def normalize_for_match(text: str) -> str:
+    text = _THOUSANDS.sub(lambda m: re.sub(r"[.,]", "", m.group()), text)
     tokens = [_SLANG.get(t, t) for t in _TOKEN.findall(text.lower())]
     return " ".join(t for t in _numbers_to_digits(tokens) if t.isalnum())

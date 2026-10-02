@@ -80,3 +80,18 @@ def test_score_is_bounded():
 ])
 def test_guess_language(text, lang):
     assert guess_language(text) == lang
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("25.000", "25000"),
+    ("1.500.000 rupiah", "1500000 rupiah"),
+    ("25,000", "25000"),
+    ("naik 2.5 persen", "naik 2 5 persen"),
+])
+def test_thousand_separators_collapse(text, expected):
+    assert normalize_for_match(text) == expected
+
+
+def test_regression_whisper_thousand_separators_pass():
+    assert score("Cuma dua puluh lima ribu.", "Cuma 25.000.") >= PASS_SCORE
+    assert score("Gajinya satu juta lima ratus ribu.", "Gajinya 1.500.000.") >= PASS_SCORE
