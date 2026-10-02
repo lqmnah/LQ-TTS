@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from bisect import bisect_left
+import math
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -93,7 +94,7 @@ def snap_to_silence(x: np.ndarray, sr: int, start_s: float, end_s: float, *, sea
         x = x.mean(axis=1)
     hop = sr // 100
     n = len(x) // hop
-    power = (x[:n * hop].reshape(n, hop).astype(np.float64) ** 2).mean(axis=1)
+    power = np.square(x[:n * hop].reshape(n, hop)).mean(axis=1, dtype=np.float64)
     need = max(1, round(min_quiet_s * 100))
     if n < need:
         return start_s, end_s
@@ -136,20 +137,26 @@ def prepare_voice(source: Path, ref_out: Path, transcriber: Transcriber, *, user
         subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", str(source), "-ac", "1", "-ar", "48000",
                         "-c:a", "pcm_s16le", str(full)], check=True)
         transcript = transcriber.transcribe(full, language, vad=True)
-        clip = select_clip(transcript.words, transcript.duration)
+        clip = select_clip(transcript.words, transcript.duration, max_s=18.0)  # snapping adds <= 1 s per edge
         if clip is None:
             raise NoCleanSpeech()
         if transcript.duration <= 20.0:
             text = (user_transcript or "").strip() or " ".join(w.text for w in transcript.words).strip()
             clip = Clip(0.0, transcript.duration, text)
         else:
-            x, sr = sf.read(full, dtype="float32")
             next_start = clip.next_word_start_s if clip.next_word_start_s is not None else transcript.duration
             prev_end = clip.prev_word_end_s if clip.prev_word_end_s is not None else 0.0
-            start_s, end_s = snap_to_silence(x, sr, clip.start_s, clip.end_s,
-                                             search_before_s=max(0.0, min(1.0, clip.start_s - prev_end)),
-                                             search_after_s=max(0.0, min(1.0, next_start - clip.end_s)))
-            clip = Clip(start_s, end_s, clip.transcript)
+            before = max(0.0, min(1.0, clip.start_s - prev_end))
+            after = max(0.0, min(1.0, next_start - clip.end_s))
+            info = sf.info(full)
+            sr = info.samplerate
+            lo = max(0, math.floor((clip.start_s - before) * sr))
+            hi = min(info.frames, math.ceil((clip.end_s + after) * sr))
+            x = sf.read(full, start=lo, stop=hi, dtype="float32")[0]  # only the clip + search region
+            offset = lo / sr
+            start_s, end_s = snap_to_silence(x, sr, clip.start_s - offset, clip.end_s - offset,
+                                             search_before_s=before, search_after_s=after)
+            clip = Clip(start_s + offset, end_s + offset, clip.transcript)
         ref_out.parent.mkdir(parents=True, exist_ok=True)
         subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", str(full),
                         "-ss", f"{clip.start_s:.3f}", "-to", f"{clip.end_s:.3f}",

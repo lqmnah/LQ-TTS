@@ -101,7 +101,39 @@ def test_prepare_voice_cuts_selected_clip(tmp_path):
     assert (info.samplerate, info.channels) == (48000, 1)
     assert abs(info.duration - p.ref_seconds) < 0.02 and 10.0 <= p.ref_seconds <= 20.1
     assert p.language == "id" and p.clip_start_s >= 1.9
+    assert p.clip_end_s - p.clip_start_s <= 20.0
     assert fake.calls[0][2] is True  # VAD on for uploads
+
+
+def test_snap_reads_only_the_search_region(tmp_path, monkeypatch):
+    src, ref = tmp_path / "source.wav", tmp_path / "out" / "ref.wav"
+    _write_tone(src, 30.0)
+    calls, real_read = [], sf.read
+
+    def spy(*args, **kwargs):
+        calls.append(kwargs)
+        return real_read(*args, **kwargs)
+
+    monkeypatch.setattr("lq_tts_engine.voiceprep.sf.read", spy)
+    fake = FakeTranscriber(voice_words=steady_words(2.0, 16.0, gap=0.3), language="id", duration=30.0)
+    prepare_voice(src, ref, fake, user_transcript=None, language=None)
+    assert calls and all("start" in c and "stop" in c for c in calls)
+    assert all((c["stop"] - c["start"]) / 48000 <= 22.0 for c in calls)
+
+
+def test_snapped_clip_stays_within_20_s(tmp_path):
+    # words are noise bursts with real silence between them, so snapping widens a maximal window on both sides
+    src, ref = tmp_path / "source.wav", tmp_path / "out" / "ref.wav"
+    words = steady_words(0.5, 29.5, gap=0.3)
+    x = np.zeros(30 * SR, dtype=np.float32)
+    rng = np.random.default_rng(0)
+    for w in words:
+        a, b = int(w.start * SR), int(w.end * SR)
+        x[a:b] = rng.uniform(-0.3, 0.3, b - a)
+    sf.write(src, x, SR)
+    p = prepare_voice(src, ref, FakeTranscriber(voice_words=words, duration=30.0), user_transcript=None,
+                      language=None)
+    assert 10.0 <= p.clip_end_s - p.clip_start_s <= 20.0
 
 
 def test_prepare_voice_uses_caller_transcript_for_short_upload(tmp_path):
