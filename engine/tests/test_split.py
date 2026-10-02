@@ -1,3 +1,5 @@
+import pytest
+
 from lq_tts_engine.text.split import Unit, is_single_sentence, split_script
 
 PANDJI_P1 = (
@@ -75,3 +77,24 @@ def test_is_single_sentence():
     assert not is_single_sentence("Ini kalimat pertama ya. Ini kalimat kedua juga.")
     assert not is_single_sentence("Baris satu ini panjang.\n\nBaris dua.")
     assert not is_single_sentence("   ")
+
+
+@pytest.mark.parametrize(
+    ("script", "expected"),
+    [
+        (
+            "Kita mulai sekarang juga. {{style: shout}} Oke!",
+            [("Kita mulai sekarang juga.", None), ("Oke!", "shout")],
+        ),
+        (
+            "Oke. {{style: whisper}} Ini rahasia besar kita.",
+            [("Oke.", None), ("Ini rahasia besar kita.", "whisper")],
+        ),
+        (
+            "{{style: a}} Ya. {{style: b}} Ini kalimat panjang sekali.",
+            [("Ya.", "a"), ("Ini kalimat panjang sekali.", "b")],
+        ),
+    ],
+)
+def test_style_never_spreads_to_other_sentences(script, expected):
+    assert [(u.text, u.style) for u in split_script(script)] == expected

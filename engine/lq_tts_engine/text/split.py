@@ -60,19 +60,25 @@ def split_script(text: str) -> list[Unit]:
                 pending_style = None
 
         merged: list[tuple[str, str | None]] = []
+
+        def flush(fragment: str, fragment_style: str | None) -> None:
+            if merged and merged[-1][1] == fragment_style:
+                merged[-1] = (f"{merged[-1][0]} {fragment}", fragment_style)
+            else:
+                merged.append((fragment, fragment_style))
+
         buf, buf_style = "", None
         for sentence, style in raw:
+            if buf and style != buf_style:
+                flush(buf, buf_style)
+                buf = ""
             buf = f"{buf} {sentence}".strip()
-            buf_style = buf_style or style
+            buf_style = style
             if _words(buf) >= 3:
                 merged.append((buf, buf_style))
                 buf, buf_style = "", None
         if buf:
-            if merged:
-                last_text, last_style = merged[-1]
-                merged[-1] = (f"{last_text} {buf}", last_style or buf_style)
-            else:
-                merged.append((buf, buf_style))
+            flush(buf, buf_style)
 
         for n, (sentence, style) in enumerate(merged):
             units.append(Unit(len(units), p_idx, sentence, style, n == len(merged) - 1))
