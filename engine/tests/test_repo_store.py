@@ -1,3 +1,4 @@
+import threading
 import uuid
 
 from lq_tts_engine.text.split import split_script
@@ -63,3 +64,28 @@ def test_purge_job_removes_job_and_sentences(repo, ready_voice):
     job, _ = new_job(repo, ready_voice)
     repo.purge_job(job["id"])
     assert repo.get_job_any(job["id"]) is None and repo.list_sentences(job["id"]) == []
+
+
+def test_concurrent_same_idempotency_key_returns_one_job(repo, ready_voice):
+    # warm the pool so both threads get an open connection and truly overlap
+    with repo.pool.connection(), repo.pool.connection():
+        pass
+    barrier = threading.Barrier(2)
+    results, errors = [], []
+
+    def worker():
+        barrier.wait()
+        try:
+            results.append(new_job(repo, ready_voice, key="race"))
+        except Exception as exc:  # surfaced via the assertion below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+    assert results[0][0]["id"] == results[1][0]["id"]
+    assert sorted(created for _, created in results) == [False, True]
+    assert sql(repo, "SELECT count(*) AS n FROM jobs WHERE idempotency_key='race'").fetchone()["n"] == 1

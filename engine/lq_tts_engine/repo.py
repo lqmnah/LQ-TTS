@@ -74,6 +74,10 @@ class Repo:
                    units: Sequence[Unit]) -> tuple[Row, bool]:
         with self.pool.connection() as conn, conn.transaction():
             if idempotency_key:
+                conn.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(%s || chr(31) || %s, 0))",
+                    (caller, idempotency_key),
+                )
                 existing = conn.execute(
                     "SELECT *, created_at > now() - interval '24 hours' AS fresh FROM jobs "
                     "WHERE caller=%s AND idempotency_key=%s FOR UPDATE",
