@@ -3,8 +3,10 @@ import pytest
 import soundfile as sf
 
 from lq_tts_engine.asr import Word
-from lq_tts_engine.voiceprep import NoCleanSpeech, prepare_voice, select_clip
+from lq_tts_engine.voiceprep import NoCleanSpeech, prepare_voice, select_clip, snap_to_silence
 from tests.fakes import FakeTranscriber
+
+SR = 48000
 
 
 def steady_words(start, end, step=0.5, gap=0.1, score=-0.2, label="kata"):
@@ -47,6 +49,37 @@ def test_fluent_speech_without_long_pauses_still_yields_a_clip():
 def _write_tone(path, seconds):
     t = np.arange(int(seconds * 48000)) / 48000
     sf.write(path, (0.3 * np.sin(2 * np.pi * 220 * t)).astype(np.float32), 48000)
+
+
+def _signal(*spans):
+    """Concatenate (seconds, is_noise) spans into a 48 kHz float32 signal (noise amplitude 0.3)."""
+    rng = np.random.default_rng(0)
+    parts = [rng.uniform(-0.3, 0.3, int(s * SR)) if noisy else np.zeros(int(s * SR)) for s, noisy in spans]
+    return np.concatenate(parts).astype(np.float32)
+
+
+def test_snap_to_silence_moves_edges_into_real_pauses():
+    x = _signal((1.0, False), (3.0, True), (0.6, False), (1.0, True))
+    start, end = snap_to_silence(x, SR, 1.05, 3.70, search_before_s=0.9, search_after_s=0.6)
+    assert 0.1 <= start <= 1.0
+    assert 4.0 <= end <= 4.6
+
+
+def test_snap_to_silence_keeps_edges_without_quiet_frames():
+    x = _signal((6.0, True))
+    assert snap_to_silence(x, SR, 1.05, 3.70, search_before_s=0.9, search_after_s=0.6) == (1.05, 3.70)
+
+
+def test_prepared_clip_ends_in_silence(tmp_path):
+    src, ref = tmp_path / "source.wav", tmp_path / "out" / "ref.wav"
+    sf.write(src, _signal((2.0, False), (13.8, True), (0.5, False), (12.7, True), (1.0, False)), SR)
+    words = steady_words(2.0, 15.5, gap=0.3) + steady_words(16.3, 29.0, gap=0.3)
+    fake = FakeTranscriber(voice_words=words, language="id", duration=30.0)
+    p = prepare_voice(src, ref, fake, user_transcript=None, language=None)
+    assert 15.8 <= p.clip_end_s <= 16.3
+    y, sr = sf.read(ref, dtype="float32")
+    tail = y[-int(0.05 * sr):]
+    assert 20 * np.log10(np.sqrt(np.mean(tail ** 2)) + 1e-9) < -40.0
 
 
 def test_prepare_voice_cuts_selected_clip(tmp_path):
