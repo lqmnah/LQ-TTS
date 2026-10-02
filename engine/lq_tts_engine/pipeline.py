@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
 import shutil
@@ -19,6 +20,8 @@ from .settings import JobSettings
 from .subs import Cue, to_srt, to_vtt
 from .synth import Synthesizer, VoiceRef
 from .text.lang import guess_language
+
+log = logging.getLogger("lq_tts_engine.pipeline")
 
 MAX_TAKES = 4
 _REV = re.compile(r"^r(\d+)$")
@@ -91,10 +94,14 @@ def process_sentence(job: dict, sentence: dict, voice: dict, deps: Deps, should_
     if best is None:
         raise SynthesisFailed(f"sentence {sentence['idx']}: every take was silent")
     take_score, path, heard, duration = best
+    status = "done" if take_score >= PASS_SCORE else "needs_review"
     deps.repo.save_sentence(
-        job["id"], sentence["idx"], status="done" if take_score >= PASS_SCORE else "needs_review",
+        job["id"], sentence["idx"], status=status,
         takes=take_no, score=take_score, asr_text=heard, audio_path=str(path), duration_s=duration,
     )
+    log.info("sentence done", extra={"ctx": {"job": str(job["id"]), "revision": job["revision"],
+                                             "idx": sentence["idx"], "status": status, "takes": take_no,
+                                             "score": round(take_score, 3), "duration_s": round(duration, 3)}})
 
 
 def assemble_revision(job: dict, deps: Deps) -> float:

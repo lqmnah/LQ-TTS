@@ -127,3 +127,9 @@ def test_failed_assembly_leaves_previous_revision_visible(repo, ready_voice, tmp
         run_job(job2, deps, should_stop=never)
     assert latest_revision(deps.data_dir, job["id"]) == 1
     assert not revision_dir(deps.data_dir, job["id"], 2).exists()
+def test_each_sentence_is_logged(repo, ready_voice, tmp_path, caplog):
+    caplog.set_level("INFO", logger="lq_tts_engine.pipeline")
+    deps, job = setup(repo, ready_voice, tmp_path)
+    run_job(job, deps, should_stop=never)
+    recs = [r for r in caplog.records if r.name == "lq_tts_engine.pipeline" and r.getMessage() == "sentence done"]
+    assert [r.ctx["idx"] for r in recs] == [0, 1, 2] and all(r.ctx["status"] == "done" for r in recs)

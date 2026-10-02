@@ -45,7 +45,8 @@ class LeaseKeeper:
 
     def _run(self) -> None:
         while not self._stop.wait(RENEW_S):
-            self.deps.repo.renew_lease(self.job_id, LEASE_S)
+            if self.job_id is not None:
+                self.deps.repo.renew_lease(self.job_id, LEASE_S)
             self.deps.repo.heartbeat(model_loaded=True, device=self.device, rtf=self.deps.rolling_rtf())
 
     def __enter__(self) -> "LeaseKeeper":
@@ -71,10 +72,25 @@ def handle_voice(voice: dict, deps: Deps) -> None:
         deps.repo.voice_failed(voice["id"], "unsupported_audio")
         log.info("voice failed: unreadable audio", extra=ctx)
         return
+    except Exception:  # noqa: BLE001 - never leave a voice stuck in processing
+        log.exception("voice failed: unexpected error", extra=ctx)
+        deps.repo.voice_failed(voice["id"], "internal_error")
+        return
     deps.repo.voice_ready(voice["id"], ref_audio_path=str(ref), ref_transcript=prepared.transcript,
                           ref_seconds=prepared.ref_seconds, clip_start_s=prepared.clip_start_s,
                           clip_end_s=prepared.clip_end_s, language=prepared.language)
     log.info("voice ready", extra={"ctx": {**ctx["ctx"], "clip": [prepared.clip_start_s, prepared.clip_end_s]}})
+
+
+def report_expired(repo: Repo, callbacks) -> None:
+    for row in repo.requeue_expired():
+        log.warning("lease expired", extra={"ctx": {"job": str(row["id"]), "status": row["status"]}})
+        if row["status"] != "failed":
+            continue
+        job = repo.get_job_any(row["id"])
+        if job is not None and job["callback_url"]:
+            callbacks.send(job["caller"], job["callback_url"],
+                           {"job_id": str(job["id"]), "status": job["status"], "revision": job["revision"]})
 
 
 def handle_job(job: dict, deps: Deps, callbacks: CallbackSender, *, device: str) -> None:
@@ -127,15 +143,15 @@ def main() -> None:
     last_purge = 0.0
     while True:
         repo.heartbeat(model_loaded=True, device=cfg.device, rtf=deps.rolling_rtf())
-        for row in repo.requeue_expired():
-            log.warning("lease expired", extra={"ctx": {"job": str(row["id"]), "status": row["status"]}})
+        report_expired(repo, callbacks)
         if time.monotonic() - last_purge > PURGE_EVERY_S:
             removed = purge_unreferenced_takes(cfg.data_dir, repo.referenced_take_paths())
             log.info("purged takes", extra={"ctx": {"removed": removed}})
             last_purge = time.monotonic()
         voice = repo.next_voice_to_prepare()
         if voice is not None:
-            handle_voice(voice, deps)
+            with LeaseKeeper(deps, None, cfg.device):
+                handle_voice(voice, deps)
             continue
         job = repo.claim_job(LEASE_S)
         if job is not None:

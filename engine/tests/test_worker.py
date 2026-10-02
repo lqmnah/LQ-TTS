@@ -1,3 +1,4 @@
+import time
 import uuid
 
 import numpy as np
@@ -96,3 +97,33 @@ def test_handle_voice_ready_and_failed(repo, tmp_path):
     handle_voice(repo.get_voice_any(vid2), deps2)
     v2 = repo.get_voice_any(vid2)
     assert (v2["status"], v2["error_code"]) == ("failed", "no_clean_speech")
+class ExplodingTranscriber(FakeTranscriber):
+    def transcribe(self, path, language, vad=False):
+        raise ValueError("decoder exploded")
+def test_handle_voice_unexpected_error_marks_failed(repo, tmp_path):
+    vid, deps = _voice(repo, tmp_path, 30.0, steady_words(2.0, 16.0, gap=0.3))
+    deps.asr = ExplodingTranscriber()
+    handle_voice(repo.get_voice_any(vid), deps)
+    v = repo.get_voice_any(vid)
+    assert (v["status"], v["error_code"]) == ("failed", "internal_error")
+def test_report_expired_sends_callback_for_worker_crashed(repo, ready_voice, tmp_path):
+    from lq_tts_engine.worker import report_expired
+    repo.create_job(caller="lq-tts", voice_id=ready_voice["id"], text=TEXT, settings={},
+                    callback_url="http://app.local/cb", idempotency_key=None, units=split_script(TEXT))
+    rec = Recorder()
+    for _ in range(3):
+        job = repo.claim_job(lease_s=0)
+        time.sleep(0.01)
+        report_expired(repo, rec)
+    j = repo.get_job_any(job["id"])
+    assert (j["status"], j["error_code"]) == ("failed", "worker_crashed")
+    assert rec.sent == [("lq-tts", "http://app.local/cb", {"job_id": str(job["id"]), "status": "failed", "revision": 1})]
+def test_lease_keeper_without_job_keeps_heartbeat_fresh(repo, monkeypatch, tmp_path):
+    from lq_tts_engine import worker
+    monkeypatch.setattr(worker, "RENEW_S", 0.05)
+    deps = Deps(repo=repo, synth=ToneSynth(), asr=FakeTranscriber(), data_dir=tmp_path / "data")
+    repo.heartbeat(model_loaded=True, device="cpu", rtf=None)
+    before = repo.worker_state()["beat_at"]
+    with worker.LeaseKeeper(deps, None, "cpu"):
+        time.sleep(0.3)
+    assert repo.worker_state()["beat_at"] > before
