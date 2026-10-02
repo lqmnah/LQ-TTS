@@ -79,39 +79,53 @@ def select_clip(words: list[Word], duration: float, *, min_s: float = 10.0, max_
 
 
 def snap_to_silence(x: np.ndarray, sr: int, start_s: float, end_s: float, *, search_before_s: float,
-                    search_after_s: float, quiet_db: float = -45.0, min_quiet_s: float = 0.05) -> tuple[float, float]:
-    """Move clip edges into the nearest real pause (10 ms RMS frames below `quiet_db`).
+                    search_after_s: float, quiet_db: float = -45.0, min_quiet_s: float = 0.05,
+                    rel_db: float = 20.0) -> tuple[float, float]:
+    """Move clip edges into the nearest real pause.
 
-    The end moves forward to the middle of the first quiet run of at least `min_quiet_s` within
-    `search_after_s`; the start moves backward likewise within `search_before_s`. No quiet run: edge kept.
+    A pause is a run of sliding `min_quiet_s` windows (10 ms step) whose RMS is at most the clip's median
+    speech level minus `rel_db` (uploads often carry a music/room bed) or below the absolute floor `quiet_db`.
+    Median speech level = median of the clip's 10 ms frame levels above their own 30th percentile.
+    The end moves forward to the middle of the first such run within `search_after_s`; the start moves
+    backward to the middle of the nearest run within `search_before_s`. No run found: edge kept.
     """
     if x.ndim > 1:
         x = x.mean(axis=1)
     hop = sr // 100
     n = len(x) // hop
-    rms = np.sqrt((x[:n * hop].reshape(n, hop).astype(np.float64) ** 2).mean(axis=1))
-    quiet = 20 * np.log10(rms + 1e-9) < quiet_db
+    power = (x[:n * hop].reshape(n, hop).astype(np.float64) ** 2).mean(axis=1)
     need = max(1, round(min_quiet_s * 100))
+    if n < need:
+        return start_s, end_s
 
     def frame(t: float) -> int:
-        return int(t * 100 + 1e-6)
+        return min(n, max(0, int(t * 100 + 1e-6)))
 
-    def first_quiet_run(frames: range) -> tuple[int, int] | None:
-        run: list[int] = []
-        for k in frames:
+    clip_db = 10 * np.log10(power[frame(start_s):frame(end_s)] + 1e-18)
+    if clip_db.size:
+        speech = clip_db[clip_db > np.percentile(clip_db, 30)]
+        relative = float(np.median(speech if speech.size else clip_db)) - rel_db
+    else:
+        relative = -np.inf
+    window_db = 10 * np.log10(np.convolve(power, np.ones(need) / need, "valid") + 1e-18)
+    quiet = (window_db <= relative) | (window_db < quiet_db)  # quiet[k]: window over frames k .. k+need-1
+
+    def first_run(ks: range) -> tuple[int, int] | None:
+        """First contiguous run of quiet windows in scan order, as a frame span [lo, hi)."""
+        found: list[int] = []
+        for k in ks:
             if quiet[k]:
-                run.append(k)
-            elif len(run) >= need:
+                found.append(k)
+            elif found:
                 break
-            else:
-                run = []
-        return (min(run), max(run)) if len(run) >= need else None
+        return (min(found), max(found) + need) if found else None
 
-    after = first_quiet_run(range(frame(end_s), min(n, frame(end_s + max(0.0, search_after_s)))))
-    before = first_quiet_run(range(min(n, frame(start_s)) - 1,
-                                   frame(max(0.0, start_s - max(0.0, search_before_s))) - 1, -1))
-    new_end = (after[0] + after[1] + 1) / 200 if after else end_s
-    new_start = (before[0] + before[1] + 1) / 200 if before else start_s
+    a, b = frame(end_s), frame(end_s + max(0.0, search_after_s))
+    after = first_run(range(a, b - need + 1))
+    a, b = frame(start_s - max(0.0, search_before_s)), frame(start_s)
+    before = first_run(range(b - need, a - 1, -1))
+    new_end = (after[0] + after[1]) / 200 if after else end_s
+    new_start = (before[0] + before[1]) / 200 if before else start_s
     return new_start, new_end
 
 

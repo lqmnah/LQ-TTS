@@ -52,27 +52,37 @@ def _write_tone(path, seconds):
 
 
 def _signal(*spans):
-    """Concatenate (seconds, is_noise) spans into a 48 kHz float32 signal (noise amplitude 0.3)."""
+    """Concatenate (seconds, amplitude) spans of uniform noise into a 48 kHz float32 signal (0 = digital silence)."""
     rng = np.random.default_rng(0)
-    parts = [rng.uniform(-0.3, 0.3, int(s * SR)) if noisy else np.zeros(int(s * SR)) for s, noisy in spans]
-    return np.concatenate(parts).astype(np.float32)
+    return np.concatenate([rng.uniform(-a, a, int(s * SR)) for s, a in spans]).astype(np.float32)
+
+
+SPEECH, BED = 0.3, 0.0308  # uniform noise RMS ~ -15 dBFS and ~ -35 dBFS
 
 
 def test_snap_to_silence_moves_edges_into_real_pauses():
-    x = _signal((1.0, False), (3.0, True), (0.6, False), (1.0, True))
+    x = _signal((1.0, 0), (3.0, SPEECH), (0.6, 0), (1.0, SPEECH))
+    start, end = snap_to_silence(x, SR, 1.05, 3.70, search_before_s=0.9, search_after_s=0.6)
+    assert 0.1 <= start <= 1.0
+    assert 4.0 <= end <= 4.6
+
+
+def test_snap_to_silence_finds_pauses_over_a_background_bed():
+    loud = 0.55  # ~ -10 dBFS speech; pauses carry a ~ -35 dBFS music/room bed, never below -45 dBFS
+    x = _signal((1.0, BED), (3.0, loud), (0.6, BED), (1.0, loud))
     start, end = snap_to_silence(x, SR, 1.05, 3.70, search_before_s=0.9, search_after_s=0.6)
     assert 0.1 <= start <= 1.0
     assert 4.0 <= end <= 4.6
 
 
 def test_snap_to_silence_keeps_edges_without_quiet_frames():
-    x = _signal((6.0, True))
+    x = _signal((6.0, SPEECH))
     assert snap_to_silence(x, SR, 1.05, 3.70, search_before_s=0.9, search_after_s=0.6) == (1.05, 3.70)
 
 
 def test_prepared_clip_ends_in_silence(tmp_path):
     src, ref = tmp_path / "source.wav", tmp_path / "out" / "ref.wav"
-    sf.write(src, _signal((2.0, False), (13.8, True), (0.5, False), (12.7, True), (1.0, False)), SR)
+    sf.write(src, _signal((2.0, 0), (13.8, SPEECH), (0.5, 0), (12.7, SPEECH), (1.0, 0)), SR)
     words = steady_words(2.0, 15.5, gap=0.3) + steady_words(16.3, 29.0, gap=0.3)
     fake = FakeTranscriber(voice_words=words, language="id", duration=30.0)
     p = prepare_voice(src, ref, fake, user_transcript=None, language=None)
