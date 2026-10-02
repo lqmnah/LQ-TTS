@@ -65,23 +65,29 @@ def handle_voice(voice: dict, deps: Deps) -> None:
         prepared = prepare_voice(Path(voice["source_path"]), ref, deps.asr,
                                  user_transcript=voice["user_transcript"], language=hint)
     except NoCleanSpeech:
-        deps.repo.voice_failed(voice["id"], "no_clean_speech")
+        _voice_failed(voice, deps, "no_clean_speech", ctx)
         log.info("voice failed: no clean speech", extra=ctx)
         return
     except subprocess.CalledProcessError:
-        deps.repo.voice_failed(voice["id"], "unsupported_audio")
+        _voice_failed(voice, deps, "unsupported_audio", ctx)
         log.info("voice failed: unreadable audio", extra=ctx)
         return
     except Exception:  # noqa: BLE001 - never leave a voice stuck in processing
         log.exception("voice failed: unexpected error", extra=ctx)
-        deps.repo.voice_failed(voice["id"], "internal_error")
+        _voice_failed(voice, deps, "internal_error", ctx)
         return
-    deps.repo.voice_ready(voice["id"], ref_audio_path=str(ref), ref_transcript=prepared.transcript,
-                          ref_seconds=prepared.ref_seconds, clip_start_s=prepared.clip_start_s,
-                          clip_end_s=prepared.clip_end_s, language=prepared.language)
+    if not deps.repo.voice_ready(voice["id"], ref_audio_path=str(ref), ref_transcript=prepared.transcript,
+                                 ref_seconds=prepared.ref_seconds, clip_start_s=prepared.clip_start_s,
+                                 clip_end_s=prepared.clip_end_s, language=prepared.language):
+        _remove_deleted_voice(voice, deps, ctx)
+        return
     log.info("voice ready", extra={"ctx": {**ctx["ctx"], "clip": [prepared.clip_start_s, prepared.clip_end_s]}})
-
-
+def _remove_deleted_voice(voice: dict, deps: Deps, ctx: dict) -> None:
+    shutil.rmtree(deps.data_dir / "voices" / str(voice["id"]), ignore_errors=True)
+    log.info("voice deleted during preparation; removed", extra=ctx)
+def _voice_failed(voice: dict, deps: Deps, code: str, ctx: dict) -> None:
+    if not deps.repo.voice_failed(voice["id"], code):
+        _remove_deleted_voice(voice, deps, ctx)
 def report_expired(repo: Repo, callbacks) -> None:
     for row in repo.requeue_expired():
         log.warning("lease expired", extra={"ctx": {"job": str(row["id"]), "status": row["status"]}})

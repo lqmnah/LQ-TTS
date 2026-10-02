@@ -59,15 +59,19 @@ class Repo:
             "SELECT * FROM voices WHERE status='processing' AND deleted_at IS NULL ORDER BY created_at LIMIT 1"
         )
 
-    def voice_ready(self, voice_id, *, ref_audio_path, ref_transcript, ref_seconds, clip_start_s, clip_end_s, language) -> None:
-        self._one(
+    def voice_ready(self, voice_id, *, ref_audio_path, ref_transcript, ref_seconds, clip_start_s, clip_end_s, language) -> bool:
+        return self._one(
             "UPDATE voices SET status='ready', error_code=NULL, ref_audio_path=%s, ref_transcript=%s, "
-            "ref_seconds=%s, clip_start_s=%s, clip_end_s=%s, language=%s WHERE id=%s RETURNING id",
+            "ref_seconds=%s, clip_start_s=%s, clip_end_s=%s, language=%s "
+            "WHERE id=%s AND deleted_at IS NULL RETURNING id",
             (ref_audio_path, ref_transcript, ref_seconds, clip_start_s, clip_end_s, language, voice_id),
-        )
+        ) is not None
 
-    def voice_failed(self, voice_id, code: str) -> None:
-        self._one("UPDATE voices SET status='failed', error_code=%s WHERE id=%s RETURNING id", (code, voice_id))
+    def voice_failed(self, voice_id, code: str) -> bool:
+        return self._one(
+            "UPDATE voices SET status='failed', error_code=%s WHERE id=%s AND deleted_at IS NULL RETURNING id",
+            (code, voice_id),
+        ) is not None
 
     # ---- jobs ---------------------------------------------------------------
     def create_job(self, *, caller, voice_id, text, settings: dict, callback_url, idempotency_key,
