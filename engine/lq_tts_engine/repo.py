@@ -119,7 +119,7 @@ class Repo:
         return self._one(
             "UPDATE jobs SET status='running', lease_until = now() + %s * interval '1 second', "
             "started_at = coalesce(started_at, now()) "
-            "WHERE id = (SELECT id FROM jobs WHERE status='queued' AND deleted_at IS NULL "
+            "WHERE id = (SELECT id FROM jobs WHERE status='queued' "
             "            ORDER BY priority DESC, created_at FOR UPDATE SKIP LOCKED LIMIT 1) "
             "RETURNING *",
             (lease_s,),

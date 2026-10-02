@@ -140,3 +140,13 @@ def test_referenced_take_paths(repo, ready_voice):
     job = new_job(repo, ready_voice)
     repo.save_sentence(job["id"], 0, status="done", takes=1, score=1.0, asr_text="x", audio_path="/t/a.wav", duration_s=1.0)
     assert repo.referenced_take_paths() == {"/t/a.wav"}
+
+
+def test_deleted_running_job_is_reclaimed_after_crash(repo, ready_voice):
+    job = new_job(repo, ready_voice)
+    repo.claim_job(lease_s=0)
+    assert repo.delete_job("lq-tts", job["id"])["status"] == "running"
+    repo.requeue_expired()
+    claimed = repo.claim_job()
+    assert claimed is not None and claimed["id"] == job["id"]
+    assert claimed["cancel_requested"] is True and claimed["deleted_at"] is not None
