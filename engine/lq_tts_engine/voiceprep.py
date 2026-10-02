@@ -62,6 +62,9 @@ def select_clip(words: list[Word], duration: float, *, min_s: float = 10.0, max_
                 if best_key is None or key > best_key:
                     best, best_key = window, key
     if best is None:
+        if cut_gap_s > 0:
+            return select_clip(words, duration, min_s=min_s, max_s=max_s, max_gap_s=max_gap_s, cut_gap_s=0.0,
+                               min_ok_s=min_ok_s, pad_s=pad_s)
         return None
     return Clip(max(0.0, best[0].start - pad_s), min(duration, best[-1].end + pad_s),
                 " ".join(w.text for w in best).strip())
@@ -77,8 +80,9 @@ def prepare_voice(source: Path, ref_out: Path, transcriber: Transcriber, *, user
         clip = select_clip(transcript.words, transcript.duration)
         if clip is None:
             raise NoCleanSpeech()
-        if user_transcript and transcript.duration <= 20.0:
-            clip = Clip(0.0, transcript.duration, user_transcript.strip())
+        if transcript.duration <= 20.0:
+            text = (user_transcript or "").strip() or " ".join(w.text for w in transcript.words).strip()
+            clip = Clip(0.0, transcript.duration, text)
         ref_out.parent.mkdir(parents=True, exist_ok=True)
         subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", str(full),
                         "-ss", f"{clip.start_s:.3f}", "-to", f"{clip.end_s:.3f}",

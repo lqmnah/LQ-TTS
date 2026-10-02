@@ -39,9 +39,9 @@ def test_returns_none_without_8_s_of_continuous_speech():
     assert select_clip([], 10.0) is None
 
 
-def test_cuts_only_at_pauses_of_at_least_250_ms():
-    words = steady_words(0.0, 30.0, gap=0.1)  # 100 ms gaps everywhere: only run edges are legal cuts
-    assert select_clip(words, 30.0) is None
+def test_fluent_speech_without_long_pauses_still_yields_a_clip():
+    clip = select_clip(steady_words(0.0, 30.0, gap=0.1), 30.0)  # 100 ms gaps everywhere
+    assert clip is not None and 8.0 <= clip.end_s - clip.start_s <= 20.1
 
 
 def _write_tone(path, seconds):
@@ -75,3 +75,22 @@ def test_prepare_voice_raises_without_clean_speech(tmp_path):
     with pytest.raises(NoCleanSpeech):
         prepare_voice(src, tmp_path / "ref.wav", FakeTranscriber(voice_words=steady_words(0.0, 5.0), duration=6.0),
                       user_transcript=None, language=None)
+
+
+def test_short_upload_without_transcript_keeps_whole_file(tmp_path):
+    src, ref = tmp_path / "source.wav", tmp_path / "ref.wav"
+    _write_tone(src, 18.0)
+    words = steady_words(0.0, 8.6, gap=0.3) + steady_words(9.3, 17.5, gap=0.3)  # 0.7 s pause mid-way
+    fake = FakeTranscriber(voice_words=words, duration=18.0)
+    p = prepare_voice(src, ref, fake, user_transcript=None, language=None)
+    assert (p.clip_start_s, p.clip_end_s) == (0.0, 18.0)
+    assert p.transcript == " ".join(w.text for w in words)
+
+
+def test_blank_caller_transcript_is_ignored(tmp_path):
+    src, ref = tmp_path / "source.wav", tmp_path / "ref.wav"
+    _write_tone(src, 12.0)
+    words = steady_words(0.5, 11.5, gap=0.3)
+    fake = FakeTranscriber(voice_words=words, duration=12.0)
+    p = prepare_voice(src, ref, fake, user_transcript="   ", language="id")
+    assert p.transcript == " ".join(w.text for w in words)
