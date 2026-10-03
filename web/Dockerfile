@@ -1,18 +1,18 @@
 # syntax=docker/dockerfile:1
 
-FROM node:26-bookworm-slim AS client
+FROM node:26.10.0-bookworm-slim AS client
 WORKDIR /app/client
 COPY client/package.json client/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY client/ ./
 RUN npm run build
 
-FROM node:26-bookworm-slim AS server-deps
+FROM node:26.10.0-bookworm-slim AS server-deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund
 
-FROM node:26-bookworm-slim
+FROM node:26.10.0-bookworm-slim
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=8080
 WORKDIR /app
 COPY --from=server-deps /app/node_modules ./node_modules
