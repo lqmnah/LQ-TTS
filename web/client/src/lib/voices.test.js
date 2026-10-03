@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_AUDIO_BYTES, audioFileProblem, countsTowardLimit } from './voices.js';
+import { MAX_AUDIO_BYTES, audioFileProblem, countsTowardLimit, pickVoice } from './voices.js';
 
 const file = (name, size) => ({ name, size });
 
@@ -22,5 +22,16 @@ describe('countsTowardLimit', () => {
     expect(countsTowardLimit({ status: 'processing' })).toBe(true);
     expect(countsTowardLimit({ status: 'ready' })).toBe(true);
     expect(countsTowardLimit({ status: 'failed' })).toBe(false);
+  });
+});
+describe('pickVoice', () => {
+  const mine = [{ id: 'v1' }, { id: 'v2' }];
+  const profiles = [{ id: 'p1' }];
+  it('follows ?voice=, then the draft voice, then my first voice, then the first profile (spec §3)', () => {
+    expect(pickVoice({ requested: 'p1', saved: 'v2', mine, profiles })).toBe('p1');
+    expect(pickVoice({ requested: 'gone', saved: 'v2', mine, profiles })).toBe('v2');
+    expect(pickVoice({ requested: null, saved: 'gone', mine, profiles })).toBe('v1');
+    expect(pickVoice({ requested: null, saved: '', mine: [], profiles })).toBe('p1');
+    expect(pickVoice({ requested: null, saved: '', mine: [], profiles: [] })).toBe('');
   });
 });

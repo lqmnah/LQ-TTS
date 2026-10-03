@@ -3,6 +3,7 @@
 /** @typedef {import('./types.js').LoginResult} LoginResult */
 /** @typedef {import('./types.js').Health} Health */
 /** @typedef {import('./types.js').Voice} Voice */
+/** @typedef {import('./types.js').VoiceProfile} VoiceProfile */
 /** @typedef {import('./types.js').Estimate} Estimate */
 /** @typedef {import('./types.js').JobSettings} JobSettings */
 /** @typedef {import('./types.js').JobSummary} JobSummary */
@@ -123,6 +124,8 @@ export const api = {
   health: () => request('/health'),
   /** @returns {Promise<Voice[]>} */
   voices: () => request('/voices'),
+  /** Active VO Profiles; `status` is null while the engine cannot be reached. @returns {Promise<VoiceProfile[]>} */
+  voiceProfiles: () => request('/voice-profiles'),
   /** @param {string} id @returns {Promise<null>} */
   deleteVoice: (id) => request(`/voices/${enc(id)}`, { method: 'DELETE' }),
   /** @param {string} text @param {AbortSignal} [signal] @returns {Promise<Estimate>} */

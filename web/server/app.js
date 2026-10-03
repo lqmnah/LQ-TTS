@@ -11,6 +11,7 @@ import { jobsRouter } from './routes/jobs.js';
 import { meRouter } from './routes/me.js';
 import { mountClient } from './routes/static.js';
 import { voicesRouter } from './routes/voices.js';
+import { voiceProfilesRouter } from './routes/voice-profiles.js';
 
 export function createApp(ctx, { healthCacheMs = 10000, sseKeepaliveMs = 15000 } = {}) {
   const app = express();
@@ -29,6 +30,7 @@ export function createApp(ctx, { healthCacheMs = 10000, sseKeepaliveMs = 15000 }
   app.use('/api', requireAuth(ctx));
   app.use('/api', meRouter(ctx));
   app.use('/api', voicesRouter(ctx));
+  app.use('/api', voiceProfilesRouter(ctx));
   app.use('/api', jobsRouter(ctx));
   app.use('/api', jobActionsRouter(ctx));
   app.use('/api', eventsRouter(ctx, { keepaliveMs: sseKeepaliveMs }));

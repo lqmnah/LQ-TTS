@@ -1,0 +1,30 @@
+{
+  "slug": "pandji",
+  "name": "Pandji",
+  "gender": "male",
+  "language": "id",
+  "description": {
+    "id": "Pria, bariton hangat. Gaya bercerita yang santai dan tenang, intonasi ekspresif, penekanan tegas di kata kunci, jeda yang disengaja. Bahasa Indonesia kasual ala Jakarta.",
+    "en": "Male, warm baritone. Relaxed, calm storytelling with expressive intonation, firm emphasis on key words and deliberate pauses. Casual Jakarta-style Indonesian."
+  },
+  "tags": [
+    { "id": "Pria", "en": "Male" },
+    { "id": "Bariton hangat", "en": "Warm baritone" },
+    { "id": "Tegas", "en": "Firm" },
+    { "id": "Tenang", "en": "Calm" },
+    { "id": "Pencerita", "en": "Storyteller" },
+    { "id": "Ekspresif", "en": "Expressive" },
+    { "id": "Santai", "en": "Conversational" },
+    { "id": "Bahasa Indonesia", "en": "Indonesian" }
+  ],
+  "bestFor": {
+    "id": "Narasi, ulasan dan komentar film, podcast, video penjelasan, YouTube.",
+    "en": "Narration, film reviews and commentary, podcasts, explainers, YouTube."
+  },
+  "consent": {
+    "subject": "Pandji",
+    "attestedBy": "lqmnah",
+    "scope": "Public library voice for all LQ-TTS users on tts.lq-studio.com"
+  },
+  "sort": 10
+}

@@ -1,6 +1,7 @@
 import { PlusIcon, TrashIcon, UserSoundIcon } from '@phosphor-icons/react';
 import { useEffect, useRef, useState } from 'react';
 import PlayButton from '../components/PlayButton.jsx';
+import { ProfileSection } from '../components/VoiceProfiles.jsx';
 import { VoiceStatus } from '../components/status.jsx';
 import { Button, EmptyState, Field, Notice, PageHeader, Segmented, Skeleton, buttonClass, inputClass } from '../components/ui.jsx';
 import { hasKey, useI18n } from '../i18n/index.jsx';
@@ -29,6 +30,7 @@ export default function VoicesPage() {
   const session = useSession();
   const me = session.me;
   const voices = useResource(() => api.voices(), []);
+  const profiles = useResource(() => api.voiceProfiles(), []);
   const [formOpen, setFormOpen] = useState(false);
   const [created, setCreated] = useState(false);
   const [announcement, setAnnouncement] = useState('');
@@ -102,7 +104,7 @@ export default function VoicesPage() {
   }, [formOpen, atLimit]);
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-8">
       <PageHeader
         title={t('voices.title')}
         subtitle={loaded || voices.error ? t('voices.usage', { count: usedLabel, limit: formatNumber(limit, lang) }) : null}
@@ -112,28 +114,32 @@ export default function VoicesPage() {
           </Button>
         )}
       />
-      {atLimit ? (
-        <div ref={limitRef} tabIndex={-1} className="rounded-control outline-none">
-          <Notice
-            tone="warning"
-            testId="voice-limit"
-            action={me?.paid ? null : <a className={buttonClass('secondary', 'sm')} href={me?.topupUrl} target="_blank" rel="noreferrer">{t('voices.upgrade')}</a>}
-          >
-            {t('voices.limit', { limit: formatNumber(limit, lang) })}
-          </Notice>
-        </div>
-      ) : null}
-      {created && processing ? <Notice tone="success">{t('voices.form.success')}</Notice> : null}
-      {formOpen ? <CloneVoiceForm onCancel={closeForm} onCreated={onCreated} onLimitReached={refreshAll} onAborted={refreshAll} onAnnounce={setAnnouncement} /> : null}
-      <p className="sr-only" aria-live="polite" data-testid="upload-live">{announcement}</p>
-      <VoiceList
-        voices={voices}
-        onDeleted={(id) => {
-          setData((items) => items?.filter((v) => v.id !== id));
-          reload();
-          session.refresh();
-        }}
-      />
+      <ProfileSection profiles={profiles} />
+      <section aria-labelledby="my-voices-heading" className="flex flex-col gap-4">
+        <h2 id="my-voices-heading" className="text-lg font-semibold text-ink">{t('voices.mine')}</h2>
+        {atLimit ? (
+          <div ref={limitRef} tabIndex={-1} className="rounded-control outline-none">
+            <Notice
+              tone="warning"
+              testId="voice-limit"
+              action={me?.paid ? null : <a className={buttonClass('secondary', 'sm')} href={me?.topupUrl} target="_blank" rel="noreferrer">{t('voices.upgrade')}</a>}
+            >
+              {t('voices.limit', { limit: formatNumber(limit, lang) })}
+            </Notice>
+          </div>
+        ) : null}
+        {created && processing ? <Notice tone="success">{t('voices.form.success')}</Notice> : null}
+        {formOpen ? <CloneVoiceForm onCancel={closeForm} onCreated={onCreated} onLimitReached={refreshAll} onAborted={refreshAll} onAnnounce={setAnnouncement} /> : null}
+        <p className="sr-only" aria-live="polite" data-testid="upload-live">{announcement}</p>
+        <VoiceList
+          voices={voices}
+          onDeleted={(id) => {
+            setData((items) => items?.filter((v) => v.id !== id));
+            reload();
+            session.refresh();
+          }}
+        />
+      </section>
     </div>
   );
 }

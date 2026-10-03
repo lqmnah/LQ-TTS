@@ -11,6 +11,7 @@ const SCRIPT = [
   'Terima kasih sudah mendengarkan sampai selesai.',
 ].join(' ');
 const NEW_SECOND = 'Kalimat kedua sekarang dibuat ulang dengan teks yang baru.';
+const PANDJI_SCRIPT = 'Halo, ini Pandji dari LQ TTS. Suara ini bisa dipakai semua akun.';
 
 async function apiCall(page, method, path, body) {
   return page.evaluate(async ({ method, path, body }) => {
@@ -23,7 +24,7 @@ async function apiCall(page, method, path, body) {
   }, { method, path, body });
 }
 
-test('journey: login with 2FA, clone, generate, live progress, regenerate, download, ID and EN', async ({ page, guard }) => {
+test('journey: login with 2FA, VO Profile voiceover, clone, generate, live progress, regenerate, download, ID and EN', async ({ page, guard }) => {
   const creds = credentials();
   let signedIn = false;
   guard.expect((res) => !signedIn && anonymousProbe(res));
@@ -43,6 +44,36 @@ test('journey: login with 2FA, clone, generate, live progress, regenerate, downl
   // Leftovers of an earlier failed run must not eat the Free plan's 3-voice limit.
   const before = await apiCall(page, 'GET', '/voices');
   for (const v of before.json.filter((x) => x.name.startsWith('E2E '))) await apiCall(page, 'DELETE', `/voices/${v.id}`);
+
+  // 1b. VO Profile: the Pandji card is on the Voices page, previews, and makes one short voiceover at the normal price
+  await page.getByRole('link', { name: 'Suara', exact: true }).click();
+  await expect(page.getByRole('heading', { level: 2, name: 'VO Profile', exact: true })).toBeVisible();
+  const pandjiCard = page.getByTestId('profile-card').filter({ hasText: 'Pandji' });
+  await expect(pandjiCard).toHaveAttribute('data-status', 'ready');
+  await expect(pandjiCard.getByRole('button', { name: /^Hapus/ })).toHaveCount(0);
+  const pandjiPreview = pandjiCard.getByRole('button', { name: 'Dengarkan contoh Pandji', exact: true });
+  await pandjiPreview.click();
+  await expect(pandjiPreview).toHaveAttribute('aria-pressed', 'true');
+  await pandjiPreview.click();
+  await expect(pandjiPreview).toHaveAttribute('aria-pressed', 'false');
+  await pandjiCard.getByRole('link', { name: 'Pakai suara ini: Pandji', exact: true }).click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Teks ke Suara', exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/\/$/); // ?voice= was adopted into the draft and dropped from the URL
+  await expect(page.getByLabel('Suara', { exact: true }).locator('option:checked')).toHaveText('Pandji');
+  await page.getByLabel('Naskah', { exact: true }).fill(PANDJI_SCRIPT);
+  await expect(page.getByTestId('price')).toHaveText('Sekitar 1 kredit (Rp100)');
+  // Evidence for SOP G5: the composer with the VO Profile selected.
+  await page.screenshot({ path: new URL('../artifacts/journey/tts-pandji.png', import.meta.url).pathname, animations: 'disabled' });
+  await page.getByTestId('generate').click();
+  await expect(page).toHaveURL(/\/jobs\/[0-9a-f-]{36}$/);
+  const pandjiJobId = new URL(page.url()).pathname.split('/').pop();
+  await expect(page.getByTestId('job-status')).toHaveAttribute('data-status', 'done', { timeout: 300_000 });
+  await expect(page.getByText('Pandji', { exact: true }).first()).toBeVisible();
+  // Leave the job page before deleting it, so nothing on screen asks for a job that is gone.
+  await page.getByRole('link', { name: 'Suara', exact: true }).click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Suara', exact: true })).toBeVisible();
+  const pandjiJobDeleted = await apiCall(page, 'DELETE', `/jobs/${pandjiJobId}`);
+  expect(pandjiJobDeleted.status).toBe(204);
 
   // 2. Clone a voice (consent is required)
   await page.getByRole('link', { name: 'Suara', exact: true }).click();

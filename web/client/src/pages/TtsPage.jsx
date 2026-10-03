@@ -1,6 +1,6 @@
 import { UserSoundIcon, WaveformIcon } from '@phosphor-icons/react';
 import { useCallback, useEffect, useState } from 'react';
-import { Link, useNavigate, useOutletContext } from 'react-router';
+import { Link, useNavigate, useOutletContext, useSearchParams } from 'react-router';
 import { Button, EmptyState, Field, Notice, PageHeader, Select, Skeleton, buttonClass } from '../components/ui.jsx';
 import { useI18n } from '../i18n/index.jsx';
 import { api } from '../lib/api.js';
@@ -9,6 +9,9 @@ import { errorText } from '../lib/errors.js';
 import { charCount, creditsFor, formatNumber, rupiahFor } from '../lib/pricing.js';
 import { useSession } from '../lib/session.jsx';
 import { useResource } from '../lib/useResource.js';
+import { pickVoice } from '../lib/voices.js';
+
+const answered = (resource) => resource.data !== undefined || resource.error !== null;
 
 export default function TtsPage() {
   const { t, tn, lang } = useI18n();
@@ -17,6 +20,9 @@ export default function TtsPage() {
   const navigate = useNavigate();
   const { health } = useOutletContext() ?? {};
   const voices = useResource(() => api.voices(), []);
+  const profiles = useResource(() => api.voiceProfiles(), []);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requested = searchParams.get('voice');
   const [draft, setDraft] = useState(() => loadDraft(me.id));
   const [estimate, setEstimate] = useState(null);
   const [submitting, setSubmitting] = useState(false);
@@ -65,8 +71,31 @@ export default function TtsPage() {
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, [recheckBalance]);
 
-  const ready = (voices.data ?? []).filter((v) => v.status === 'ready');
-  const voiceId = ready.some((v) => v.id === draft.voiceId) ? draft.voiceId : (ready[0]?.id ?? '');
+  const mine = (voices.data ?? []).filter((v) => v.status === 'ready');
+  const library = (profiles.data ?? []).filter((p) => p.status === 'ready');
+  const settled = answered(voices) && answered(profiles);
+  const requestedUsable = requested !== null && (mine.some((v) => v.id === requested) || library.some((p) => p.id === requested));
+
+  // A profile card links here with ?voice=<id>. Once both lists are known it becomes the draft's voice (when usable)
+  // and leaves the URL, so a later pick in the select is never overridden by the link. The URL is cleared only after
+  // the draft holding it has committed (and been saved by the effect above), whatever order the lists resolved in.
+  useEffect(() => {
+    if (requested !== null && settled && requestedUsable && draft.voiceId !== requested) {
+      setDraft((d) => ({ ...d, voiceId: requested }));
+    }
+  }, [requested, requestedUsable, settled, draft.voiceId]);
+  useEffect(() => {
+    if (requested === null || !settled || (requestedUsable && draft.voiceId !== requested)) return;
+    setSearchParams((params) => {
+      params.delete('voice');
+      return params;
+    }, { replace: true });
+  }, [requested, requestedUsable, settled, draft.voiceId, setSearchParams]);
+  // Nothing is picked (so Generate stays off) until the picker can show the choice: both lists answered and my own
+  // voices loaded. A failed profiles fetch alone still leaves my own voices usable.
+  const voiceId = settled && voices.data !== undefined
+    ? pickVoice({ requested, saved: draft.voiceId, mine, profiles: library })
+    : '';
   const fresh = estimate !== null && estimate.forText === trimmed;
   const credits = fresh ? estimate.credits : creditsFor(chars);
   const balance = fresh && estimate.balance != null ? estimate.balance : (me.balance ?? null);
@@ -91,6 +120,11 @@ export default function TtsPage() {
       setError(err);
       setSubmitting(false);
       if (err?.code === 'voice_not_ready') voices.reload();
+      // A profile turned off since this page loaded (or a voice deleted elsewhere): re-read both lists.
+      if (err?.code === 'not_found') {
+        voices.reload();
+        profiles.reload();
+      }
       if (err?.code === 'insufficient_credits') recheckBalance();
     }
   }
@@ -125,7 +159,7 @@ export default function TtsPage() {
         </section>
 
         <aside className="flex flex-col gap-6 lg:sticky lg:top-20">
-          <VoicePicker voices={voices} ready={ready} value={voiceId} onChange={(id) => update({ voiceId: id })} />
+          <VoicePicker voices={voices} profiles={profiles} settled={settled} mine={mine} library={library} value={voiceId} onChange={(id) => update({ voiceId: id })} />
           <SettingsPanel settings={draft.settings} onSet={setSetting} onReset={() => update({ settings: normalizeSettings(DEFAULT_SETTINGS) })} noFormats={noFormats} />
           <section className="flex flex-col gap-3">
             <div className="text-sm" aria-live="polite" aria-atomic="true">
@@ -144,7 +178,7 @@ export default function TtsPage() {
             {error && !short ? (
               error.code === 'insufficient_credits'
                 ? <Notice tone="warning" action={topUp}>{errorText(t, error)}</Notice>
-                : <Notice tone="danger">{errorText(t, error)}</Notice>
+                : <Notice tone="danger">{error.code === 'not_found' ? t('tts.voice_gone') : errorText(t, error)}</Notice>
             ) : null}
             {lqsDown ? <Notice tone="warning">{t('tts.lqstudio_down')}</Notice> : null}
             <Button variant="primary" size="lg" icon={WaveformIcon} loading={submitting} disabled={!canGenerate} onClick={generate} data-testid="generate" className="w-full">
@@ -157,13 +191,16 @@ export default function TtsPage() {
   );
 }
 
-function VoicePicker({ voices, ready, value, onChange }) {
+function VoicePicker({ voices, profiles, settled, mine, library, value, onChange }) {
   const { t } = useI18n();
-  if (voices.data === undefined && !voices.error) return <Skeleton className="h-[72px]" />;
+  if (!settled) return <Skeleton className="h-[72px]" />;
   if (voices.data === undefined) {
     return <Notice tone="danger" action={<Button size="sm" onClick={voices.reload}>{t('common.retry')}</Button>}>{errorText(t, voices.error)}</Notice>;
   }
-  if (!ready.length) {
+  if (!mine.length && profiles.data === undefined) {
+    return <Notice tone="danger" action={<Button size="sm" onClick={profiles.reload}>{t('common.retry')}</Button>}>{t('tts.profiles_error')}</Notice>;
+  }
+  if (!mine.length && !library.length) {
     return (
       <EmptyState
         icon={UserSoundIcon}
@@ -176,12 +213,20 @@ function VoicePicker({ voices, ready, value, onChange }) {
   return (
     <Field id="voice" label={t('tts.voice')}>
       <Select id="voice" data-testid="voice-select" value={value} onChange={(e) => onChange(e.target.value)}>
-        {ready.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+        {library.length ? (
+          <optgroup label={t('profiles.title')}>
+            {library.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </optgroup>
+        ) : null}
+        {mine.length ? (
+          <optgroup label={t('voices.mine')}>
+            {mine.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+          </optgroup>
+        ) : null}
       </Select>
     </Field>
   );
 }
-
 function RangeField({ id, label, value, min, max, step, display, onChange }) {
   return (
     <div className="flex flex-col gap-1">

@@ -44,7 +44,7 @@ export function targetConfig() {
       webServer: [
         { command: 'node harness/fake-lqstudio.mjs', port: FAKE_LQS_PORT, reuseExistingServer: false, timeout: 20_000 },
         // SIGTERM (not Playwright's default SIGKILL) so run-server can purge its engine voices and drop the schema.
-        { command: 'node harness/run-server.mjs', url: `http://127.0.0.1:${LOCAL_PORT}/api/health`, reuseExistingServer: false, timeout: 90_000, gracefulShutdown: { signal: 'SIGTERM', timeout: 15_000 } },
+        { command: 'node harness/run-server.mjs', url: `http://127.0.0.1:${LOCAL_PORT}/api/health`, reuseExistingServer: false, timeout: 420_000, gracefulShutdown: { signal: 'SIGTERM', timeout: 15_000 } },
       ],
     };
   }

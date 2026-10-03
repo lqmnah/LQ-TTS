@@ -6,7 +6,7 @@ import { clientIp } from '../http/middleware.js';
 import { relayEngine } from '../http/relay.js';
 import { ApiError } from '../lib/errors.js';
 import { engineError, isEngineNotFound } from '../lib/upstream-errors.js';
-import { ownVoice } from '../services/ownership.js';
+import { ownVoice, usableVoice } from '../services/ownership.js';
 
 const AUDIO_EXTS = new Set(['.mp3', '.wav', '.m4a', '.flac']);
 const LANGUAGES = new Set(['id', 'en']);
@@ -159,7 +159,7 @@ export function voicesRouter(ctx) {
   });
 
   router.get('/voices/:id/preview', async (req, res) => {
-    const voice = await ownVoice(ctx, req.session.user_id, req.params.id);
+    const voice = await usableVoice(ctx, req.session.user_id, req.params.id);
     await relayEngine(ctx, req, res, `/v1/voices/${voice.id}/preview.wav`);
   });
 

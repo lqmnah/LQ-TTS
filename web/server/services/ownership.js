@@ -1,5 +1,6 @@
 import { ApiError } from '../lib/errors.js';
 import { engineError } from '../lib/upstream-errors.js';
+import { LIBRARY_OWNER } from './profiles.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -15,6 +16,20 @@ export async function ownVoice({ engine }, userId, voiceId) {
   }
   if (voice.owner_ref !== String(userId)) throw new ApiError('not_found', 'voice not found');
   return voice;
+}
+
+/** A voice the user may preview and voice over with: their own, or an active VO Profile (library voice). */
+export async function usableVoice(ctx, userId, voiceId) {
+  if (!isUuid(voiceId)) throw new ApiError('not_found', 'voice not found');
+  let voice;
+  try {
+    voice = await ctx.engine.getVoice(voiceId.toLowerCase());
+  } catch (err) {
+    throw engineError(err);
+  }
+  if (voice.owner_ref === String(userId)) return voice;
+  if (voice.owner_ref === LIBRARY_OWNER && (await ctx.profiles.get(voice.id))) return voice;
+  throw new ApiError('not_found', 'voice not found');
 }
 
 export async function ownJob({ jobsRepo }, userId, jobId) {
