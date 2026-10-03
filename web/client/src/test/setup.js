@@ -4,5 +4,6 @@ import { afterEach } from 'vitest';
 
 afterEach(() => {
   cleanup();
-  window.localStorage.clear();
+  // Files marked `@vitest-environment node` have no window.
+  globalThis.window?.localStorage.clear();
 });
