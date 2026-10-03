@@ -88,4 +88,28 @@ describe('C1 amendment C', () => {
     }
     expect((await h.as(cookie).get('/api/me')).status).toBe(200);
   });
+
+  it('a post-bump session refreshing first still ends the pre-bump ones', async () => {
+    const old = await h.login(USERS.poor);
+    h.lq.bumpTv('poor');
+    const fresh = await h.login(USERS.poor);
+    await expire(old);
+    await expire(fresh);
+    expect((await h.as(fresh).get('/api/me')).status).toBe(200);
+    expect((await row(old)).revoked_at).not.toBeNull();
+    expect((await h.as(old).get('/api/me')).status).toBe(401);
+  });
+
+  it('binds the session to the tv of the verified login, not of the later user read', async () => {
+    h.lq.state.beforeGetUser = (u) => {
+      h.lq.state.beforeGetUser = null;
+      u.tv += 1; // password changed between verify and users/:id
+    };
+    const cookie = await h.login(USERS.ana);
+    expect(h.lq.state.beforeGetUser).toBeNull();
+    expect((await row(cookie)).user_tv).toBe(h.lq.state.users.get('ana').tv - 1);
+    await expire(cookie);
+    expect((await h.as(cookie).get('/api/me')).status).toBe(401);
+    expect((await row(cookie)).revoked_at).not.toBeNull();
+  });
 });

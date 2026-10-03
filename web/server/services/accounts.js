@@ -33,12 +33,11 @@ export function createAccounts({ sessions, lqstudio, engine, config }) {
       throw lqError(err);
     }
     await assertActive(user, session.user_id);
+    // tokenVersion only rises (password change, "log out everywhere"): every refresh ends the sessions from before it,
+    // whichever session asks, and an answer read before a bump can never end sessions opened after it.
     const tv = userTv(user);
-    if (tv !== session.user_tv) {
-      // LQ-Studio bumped tokenVersion (password change, "log out everywhere"): sessions from before it end now.
-      await sessions.revokeOtherTv(session.user_id, tv);
-      throw new ApiError('unauthorized', 'please log in again');
-    }
+    await sessions.revokeBeforeTv(session.user_id, tv);
+    if (tv !== session.user_tv) throw new ApiError('unauthorized', 'please log in again');
     return (await sessions.refresh(session.id, user)) ?? session;
   }
 

@@ -2,7 +2,7 @@ import express from 'express';
 import { clearSessionCookie, clientIp, readSessionCookie, setSessionCookie } from '../http/middleware.js';
 import { ApiError } from '../lib/errors.js';
 import { lqError } from '../lib/upstream-errors.js';
-import { hashSessionId } from '../services/sessions.js';
+import { hashSessionId, userTv } from '../services/sessions.js';
 
 const isText = (value, max) => typeof value === 'string' && value.trim() !== '' && value.length <= max;
 
@@ -20,7 +20,8 @@ export function authRouter(ctx) {
     }
     if (!full.verified) return needsVerification;
     await accounts.assertActive(full, String(user.id));
-    const { raw, session } = await sessions.create({ ...user, ...full }, full.balance);
+    // The session carries the tv of the verified login: a bump after verify must still end it.
+    const { raw, session } = await sessions.create({ ...user, ...full, tv: userTv(user) }, full.balance);
     setSessionCookie(res, raw, config);
     return { status: 'ok', user: await accounts.me(session) };
   }

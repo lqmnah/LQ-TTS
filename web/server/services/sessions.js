@@ -44,10 +44,10 @@ export function createSessionStore(pool) {
     async revokeUser(userId) {
       await pool.query('UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL', [String(userId)]);
     },
-    // Ends the sessions opened before LQ-Studio's tokenVersion moved to tv; sessions opened at tv keep working.
-    async revokeOtherTv(userId, tv) {
+    // Ends the sessions opened before LQ-Studio's tokenVersion reached tv; sessions opened at or after tv keep working.
+    async revokeBeforeTv(userId, tv) {
       await pool.query(
-        'UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND user_tv <> $2 AND revoked_at IS NULL', [String(userId), tv],
+        'UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND user_tv < $2 AND revoked_at IS NULL', [String(userId), tv],
       );
     },
     async refresh(sessionId, user) {
