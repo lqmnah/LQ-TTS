@@ -1,14 +1,23 @@
 import { ArrowLeftIcon, ArrowSquareOutIcon, WaveformIcon } from '@phosphor-icons/react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Navigate, useNavigate, useSearchParams } from 'react-router';
-import { Button, Field, Notice, Segmented, buttonClass, inputClass } from '../components/ui.jsx';
+import { Button, Field, Notice, Segmented, Skeleton, buttonClass, inputClass } from '../components/ui.jsx';
 import { LANG_OPTIONS, hasKey, useI18n } from '../i18n/index.jsx';
 import { api } from '../lib/api.js';
 import { errorText } from '../lib/errors.js';
 import { lqstudioOrigin, safeNext } from '../lib/links.js';
 import { useSession } from '../lib/session.jsx';
 
-const CODE_PATTERN = /^(\d{6}|[A-Za-z0-9-]{8,16})$/;
+const TOTP_PATTERN = /^\d{6}$/;
+const BACKUP_PATTERN = /^[A-Za-z0-9-]{8,16}$/;
+
+/** TOTP digits lose spaces and dashes; anything else is sent as a backup code in its own format. Null when invalid. */
+function codeToSend(raw) {
+  const digits = raw.replace(/[\s-]/g, '');
+  if (TOTP_PATTERN.test(digits)) return digits;
+  const backup = raw.replace(/\s+/g, '');
+  return BACKUP_PATTERN.test(backup) ? backup : null;
+}
 
 export default function LoginPage() {
   const { t, lang, setLang } = useI18n();
@@ -24,6 +33,9 @@ export default function LoginPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [signupUrl, setSignupUrl] = useState(() => `${lqstudioOrigin()}/signup`);
+  const headingRef = useRef(null);
+  const shownStep = useRef(step.kind);
+  const { status, refresh } = session;
 
   useEffect(() => {
     let live = true;
@@ -38,16 +50,28 @@ export default function LoginPage() {
     };
   }, []);
 
-  if (session.status === 'authed') return <Navigate to={next} replace />;
+  useEffect(() => {
+    if (status === 'unknown') refresh();
+  }, [status, refresh]);
+
+  // Keep keyboard and screen-reader users oriented when the step changes; the code field autofocuses itself.
+  useEffect(() => {
+    if (shownStep.current === step.kind) return;
+    shownStep.current = step.kind;
+    if (step.kind !== '2fa') headingRef.current?.focus();
+  }, [step.kind]);
+
+  if (status === 'authed') return <Navigate to={next} replace />;
+  const checking = status === 'unknown' || status === 'loading';
 
   const reasonKey =
     session.reason === 'suspended' || session.reason === 'needs_verification' ? `login.reason.${session.reason}` : null;
-  const showReason = Boolean(reasonKey) && hasKey(reasonKey) && step.kind === 'credentials';
+  const showReason = !checking && Boolean(reasonKey) && hasKey(reasonKey) && step.kind === 'credentials';
 
-  const cleanCode = code.replace(/\s+/g, '');
+  const sendCode = codeToSend(code);
   const identifierMissing = Boolean(touched.identifier) && !identifier.trim();
   const passwordMissing = Boolean(touched.password) && !password;
-  const codeInvalid = Boolean(touched.code) && !CODE_PATTERN.test(cleanCode);
+  const codeInvalid = Boolean(touched.code) && !sendCode;
 
   function finish(user) {
     session.signedIn(user);
@@ -83,11 +107,11 @@ export default function LoginPage() {
   async function onCode(event) {
     event.preventDefault();
     setTouched({ code: true });
-    if (!CODE_PATTERN.test(cleanCode)) return;
+    if (!sendCode) return;
     setBusy(true);
     setError(null);
     try {
-      onResult(await api.verify2fa(step.challenge, cleanCode));
+      onResult(await api.verify2fa(step.challenge, sendCode));
     } catch (err) {
       setError(err);
     } finally {
@@ -104,7 +128,7 @@ export default function LoginPage() {
 
   const heading = (title, body) => (
     <div>
-      <h1 className="text-2xl font-semibold text-ink">{title}</h1>
+      <h1 ref={headingRef} tabIndex={-1} className="text-2xl font-semibold text-ink focus:outline-none">{title}</h1>
       <p className="mt-2 text-sm leading-relaxed text-muted">{body}</p>
     </div>
   );
@@ -128,7 +152,15 @@ export default function LoginPage() {
             <Notice tone="warning" testId="login-reason">{t(reasonKey)}</Notice>
           </div>
         ) : null}
-        {step.kind === 'credentials' ? (
+        {checking ? (
+          <div className="flex flex-col gap-5" data-testid="login-checking" aria-busy="true">
+            <Skeleton className="h-8 w-48" />
+            <Skeleton className="h-11" />
+            <Skeleton className="h-11" />
+            <Skeleton className="h-12" />
+          </div>
+        ) : null}
+        {!checking && step.kind === 'credentials' ? (
           <form noValidate onSubmit={onCredentials} className="flex flex-col gap-5">
             {heading(t('login.title'), t('login.subtitle'))}
             {error ? <Notice tone="danger" testId="login-error">{errorText(t, error)}</Notice> : null}
@@ -195,7 +227,7 @@ export default function LoginPage() {
               />
             </Field>
             <Button type="submit" variant="primary" size="lg" loading={busy} className="w-full">{t('login.verify')}</Button>
-            <Button variant="ghost" icon={ArrowLeftIcon} onClick={back} className="self-start">{t('login.back')}</Button>
+            <Button variant="ghost" icon={ArrowLeftIcon} onClick={back} disabled={busy} className="self-start">{t('login.back')}</Button>
           </form>
         ) : null}
 
@@ -206,7 +238,7 @@ export default function LoginPage() {
               {t('login.verify_cta')}
               <ArrowSquareOutIcon size={18} aria-hidden />
             </a>
-            <Button variant="ghost" icon={ArrowLeftIcon} onClick={back} className="self-start">{t('login.back')}</Button>
+            <Button variant="ghost" icon={ArrowLeftIcon} onClick={back} disabled={busy} className="self-start">{t('login.back')}</Button>
           </div>
         ) : null}
       </main>

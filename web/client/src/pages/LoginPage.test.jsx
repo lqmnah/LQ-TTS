@@ -6,7 +6,7 @@ import LoginPage from './LoginPage.jsx';
 
 vi.mock('../lib/api.js', async (importOriginal) => {
   const mod = await importOriginal();
-  return { ...mod, api: { login: vi.fn(), verify2fa: vi.fn(), health: vi.fn() } };
+  return { ...mod, api: { login: vi.fn(), verify2fa: vi.fn(), health: vi.fn(), me: vi.fn() } };
 });
 const { api, ApiError } = await import('../lib/api.js');
 
@@ -126,6 +126,52 @@ describe('LoginPage', () => {
     expect(screen.getByTestId('login-reason')).toHaveTextContent('akun perlu diverifikasi');
     second.unmount();
     renderRoutes(routes, { path: '/login', session: anonWith('unauthorized') });
+    expect(screen.queryByTestId('login-reason')).not.toBeInTheDocument();
+  });
+
+  it('moves focus to the new step heading after needs_verification and back to the form after Back', async () => {
+    api.login.mockResolvedValue({ status: 'needs_verification', verifyUrl: 'https://demo.lq-studio.com/settings' });
+    const user = userEvent.setup();
+    renderRoutes(routes, { path: '/login', ...anon });
+    await submitCredentials(user);
+    expect(await screen.findByRole('heading', { name: 'Selesaikan verifikasi akun' })).toHaveFocus();
+    await user.click(screen.getByRole('button', { name: 'Kembali' }));
+    expect(screen.getByRole('heading', { name: 'Masuk ke LQ TTS' })).toHaveFocus();
+  });
+
+  it('accepts dashed TOTP codes as digits and keeps backup codes in their own format', async () => {
+    api.login.mockResolvedValue({ status: 'need_2fa', challenge: 'ch-1' });
+    api.verify2fa.mockRejectedValueOnce(new ApiError(401, 'invalid_code', '')).mockResolvedValueOnce({ status: 'ok', user: ME });
+    const user = userEvent.setup();
+    renderRoutes(routes, { path: '/login', ...anon });
+    await submitCredentials(user);
+    const field = await screen.findByLabelText('Kode');
+    await user.type(field, '482-913');
+    await user.click(screen.getByRole('button', { name: 'Verifikasi' }));
+    expect(api.verify2fa).toHaveBeenLastCalledWith('ch-1', '482913');
+    await screen.findByText('Kode salah atau sudah kedaluwarsa. Coba kode terbaru.');
+    await user.clear(field);
+    await user.type(field, 'ab12-cd34');
+    await user.click(screen.getByRole('button', { name: 'Verifikasi' }));
+    expect(api.verify2fa).toHaveBeenLastCalledWith('ch-1', 'ab12-cd34');
+    expect(await screen.findByText('home page')).toBeInTheDocument();
+  });
+
+  it('checks an unknown session first and sends a signed-in user to ?next=', async () => {
+    let answer;
+    api.me.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    renderRoutes(routes, { path: '/login?next=%2Fvoices', session: { status: 'unknown', me: null, error: null } });
+    expect(await screen.findByTestId('login-checking')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Masuk' })).not.toBeInTheDocument();
+    answer(ME);
+    expect(await screen.findByText('voices page')).toBeInTheDocument();
+    expect(api.me).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the form when the unknown session turns out signed out', async () => {
+    api.me.mockRejectedValue(new ApiError(401, 'unauthorized', ''));
+    renderRoutes(routes, { path: '/login', session: { status: 'unknown', me: null, error: null } });
+    expect(await screen.findByRole('button', { name: 'Masuk' })).toBeInTheDocument();
     expect(screen.queryByTestId('login-reason')).not.toBeInTheDocument();
   });
 });
