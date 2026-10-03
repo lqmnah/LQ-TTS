@@ -1,5 +1,7 @@
 import AppShell from './components/AppShell.jsx';
 import RequireSession from './components/RequireSession.jsx';
+import CreditsPage from './pages/CreditsPage.jsx';
+import HistoryPage from './pages/HistoryPage.jsx';
 import JobPage from './pages/JobPage.jsx';
 import LoginPage from './pages/LoginPage.jsx';
 import NotFoundPage from './pages/NotFoundPage.jsx';
@@ -15,6 +17,8 @@ export const routes = [
       { index: true, element: <TtsPage /> },
       { path: 'jobs/:id', element: <JobPage /> },
       { path: 'voices', element: <VoicesPage /> },
+      { path: 'history', element: <HistoryPage /> },
+      { path: 'credits', element: <CreditsPage /> },
       { path: '*', element: <NotFoundPage /> },
     ],
   },
