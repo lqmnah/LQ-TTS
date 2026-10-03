@@ -24,4 +24,12 @@ describe('formatBytes', () => {
   it('uses KB below one megabyte', () => {
     expect(formatBytes(2048, 'en')).toBe('2 KB');
   });
+  it('picks the unit after rounding', () => {
+    expect(formatBytes(1048064, 'id')).toBe('1,0 MB');
+    expect(formatBytes(1048064, 'en')).toBe('1.0 MB');
+  });
+  it('renders a dash for invalid sizes', () => {
+    expect(formatBytes(Number.NaN, 'en')).toBe('–');
+    expect(formatBytes(-1, 'en')).toBe('–');
+  });
 });

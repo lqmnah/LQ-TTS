@@ -20,9 +20,11 @@ export function formatDuration(seconds) {
 }
 
 export function formatBytes(bytes, lang) {
+  if (!Number.isFinite(bytes) || bytes < 0) return DASH;
   const locale = LOCALES[lang] ?? LOCALES.id;
-  if (bytes < 1024 * 1024) {
-    return `${new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(bytes / 1024)} KB`;
+  const kb = Math.round(bytes / 1024);
+  if (kb < 1024) {
+    return `${new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(kb)} KB`;
   }
   return `${new Intl.NumberFormat(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(bytes / (1024 * 1024))} MB`;
 }
