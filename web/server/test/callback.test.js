@@ -73,6 +73,7 @@ describe('engine callback', () => {
     const lqCalls = h.lq.state.calls.length;
     expect((await callback({ job_id: id, status: 'failed', revision: 1 }, { secret: 'wrong-secret' })).status).toBe(401);
     expect((await callback({ job_id: id, status: 'failed', revision: 1 }, { ts: Math.floor(Date.now() / 1000) - 301 })).status).toBe(401);
+    expect((await callback({ job_id: id, status: 'failed', revision: 1 }, { ts: Math.floor(Date.now() / 1000) + 301 })).status).toBe(401);
     const { body, headers } = signCallback({ job_id: id, status: 'done', revision: 1 });
     const tampered = await request(h.app).post('/api/internal/engine-callback').set(headers).send(body.replace('done', 'failed'));
     expect(tampered.status).toBe(401);

@@ -32,9 +32,22 @@ export function createCharges({ pool, lqstudio, sessions, log }) {
     }
   }
 
+  // A resolver owns a charge while it talks to LQ-Studio, so a concurrent settle and refund cannot both act on it.
+  async function claim(chargeId) {
+    const { rows: [row] } = await pool.query(
+      `UPDATE charges SET resolving_until = now() + interval '30 seconds'
+       WHERE id = $1 AND state = 'held' AND (resolving_until IS NULL OR resolving_until < now()) RETURNING *`,
+      [chargeId],
+    );
+    return row ?? null;
+  }
+  async function unclaim(charge) {
+    await pool.query('UPDATE charges SET resolving_until = NULL WHERE id = $1', [charge.id]);
+  }
   async function finish(charge, state, balance) {
     await pool.query(
-      `UPDATE charges SET state = $2, resolved_at = now(), last_error = NULL WHERE id = $1 AND state = 'held'`,
+      `UPDATE charges SET state = $2, resolved_at = now(), last_error = NULL, resolving_until = NULL
+       WHERE id = $1 AND state = 'held'`,
       [charge.id, state],
     );
     if (typeof balance === 'number') await sessions.setBalance(charge.user_id, balance);
@@ -62,7 +75,7 @@ export function createCharges({ pool, lqstudio, sessions, log }) {
 
   async function recordFailure(charge, err) {
     const { rows: [row] } = await pool.query(
-      'UPDATE charges SET attempts = attempts + 1, last_error = $2 WHERE id = $1 RETURNING attempts, flagged_at',
+      'UPDATE charges SET attempts = attempts + 1, last_error = $2, resolving_until = NULL WHERE id = $1 RETURNING attempts, flagged_at',
       [charge.id, String(err?.message ?? err).slice(0, 500)],
     );
     log.warn({ event: 'charge_attempt_failed', chargeId: charge.id, holdId: charge.hold_id, attempts: row?.attempts, error: String(err?.message ?? err) }, 'charge resolution failed');
@@ -75,7 +88,9 @@ export function createCharges({ pool, lqstudio, sessions, log }) {
     }
   }
 
-  async function refundNow(charge) {
+  async function refundNow(stale) {
+    const charge = await claim(stale.id);
+    if (!charge) return;
     try {
       await refund(charge);
     } catch (err) {
@@ -86,12 +101,15 @@ export function createCharges({ pool, lqstudio, sessions, log }) {
   // Releases a hold whose outcome we never learned. "Nothing held" (404) is not final here: the request we gave up on
   // may still reach LQ-Studio and deduct. The charge then stays held without a job, and reconciliation refunds it once
   // it is older than HELD_MIN_AGE_MS, when a 404 is final.
-  async function releaseUnknownHold(charge) {
+  async function releaseUnknownHold(stale) {
+    const charge = await claim(stale.id);
+    if (!charge) return;
     let out;
     try {
       out = await lqstudio.refund({ userId: charge.user_id, holdId: charge.hold_id });
     } catch (err) {
-      if (!(err instanceof UpstreamError && err.code === 'not_found')) await recordFailure(charge, err);
+      if (err instanceof UpstreamError && err.code === 'not_found') await unclaim(charge);
+      else await recordFailure(charge, err);
       return;
     }
     await finish(charge, 'refunded', out?.balance);
@@ -117,9 +135,14 @@ export function createCharges({ pool, lqstudio, sessions, log }) {
     return out;
   }
 
-  async function resolveOne(charge, view) {
+  async function resolveOne(stale, view) {
+    const charge = await claim(stale.id);
+    if (!charge) return true; // already resolved, or another resolver is on it
     const action = decide(charge, view);
-    if (action === 'wait') return true;
+    if (action === 'wait') {
+      await unclaim(charge);
+      return true;
+    }
     try {
       if (action === 'settle') await settle(charge);
       else await refund(charge);
@@ -139,5 +162,5 @@ export function createCharges({ pool, lqstudio, sessions, log }) {
     return ok;
   }
 
-  return { insertHeld, hold, settle, refund, refundNow, recordFailure, resolveOne, resolveJob };
+  return { insertHeld, hold, refundNow, recordFailure, resolveOne, resolveJob };
 }
