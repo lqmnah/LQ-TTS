@@ -5,7 +5,7 @@ import { ApiError } from '../lib/errors.js';
 import { countChars, countSentences, creditsFor, makeTitle, rupiahFor } from '../lib/pricing.js';
 import { engineError, isEngineNotFound } from '../lib/upstream-errors.js';
 import { toSummary } from '../services/jobs-repo.js';
-import { isUuid, ownJob, ownVoice, parseIdx } from '../services/ownership.js';
+import { isUuid, ownJob, parseIdx, usableVoice } from '../services/ownership.js';
 
 const FILE_NAMES = new Set(['final.mp3', 'final.wav', 'subs.srt', 'subs.vtt']);
 const CURSOR_AT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
@@ -67,7 +67,7 @@ export function jobsRouter(ctx) {
     }
     const userId = req.session.user_id;
     await accounts.fresh(req.session);
-    const voice = await ownVoice(ctx, userId, voiceId);
+    const voice = await usableVoice(ctx, userId, voiceId);
     if (voice.status !== 'ready') throw new ApiError('voice_not_ready', `voice is ${voice.status}`);
     const credits = creditsFor(chars);
     const key = crypto.randomUUID();

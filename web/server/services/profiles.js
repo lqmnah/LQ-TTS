@@ -1,3 +1,4 @@
+import { isEngineNotFound } from '../lib/upstream-errors.js';
 /** Engine owner_ref of every VO Profile voice. User owner refs are LQ-Studio UUIDs, so they never collide. */
 export const LIBRARY_OWNER = 'library';
 
@@ -52,4 +53,21 @@ export function createProfiles(pool) {
       return rowCount > 0;
     },
   };
+}
+
+/**
+ * Active profiles joined with their engine voice, in list order. A profile whose engine voice is gone (404) or is
+ * not a library voice is left out; when the engine cannot be asked, the row stays with `voice: null`.
+ */
+export async function profilesWithVoices({ engine, profiles }) {
+  const rows = await profiles.list();
+  const joined = await Promise.all(rows.map(async (row) => {
+    try {
+      const voice = await engine.getVoice(row.voice_id);
+      return voice.owner_ref === LIBRARY_OWNER ? { row, voice } : null;
+    } catch (err) {
+      return isEngineNotFound(err) ? null : { row, voice: null };
+    }
+  }));
+  return joined.filter(Boolean);
 }
