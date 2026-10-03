@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, api, buildVoiceForm, createVoice, onUnauthorized, urls } from './api.js';
+import { ApiError, api, buildVoiceForm, createVoice, onUnauthorized, openJobEvents, urls } from './api.js';
 
 const json = (status, body, headers = {}) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', ...headers } });
@@ -188,5 +188,36 @@ describe("createVoice", () => {
     controller.abort();
     await expect(createVoice(fields, { signal: controller.signal })).rejects.toMatchObject({ name: "AbortError" });
     expect(FakeXhr.last).toBeNull();
+  });
+});
+
+describe('openJobEvents', () => {
+  class FakeEventSource {
+    static CONNECTING = 0;
+    static OPEN = 1;
+    static CLOSED = 2;
+    static last = null;
+    constructor(url) {
+      this.url = url;
+      this.readyState = FakeEventSource.CONNECTING;
+      this.close = vi.fn(() => {
+        this.readyState = FakeEventSource.CLOSED;
+      });
+      FakeEventSource.last = this;
+    }
+    addEventListener() {}
+  }
+  beforeEach(() => vi.stubGlobal('EventSource', FakeEventSource));
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('tells the caller whether the browser gave up on the stream', () => {
+    const onError = vi.fn();
+    openJobEvents('j1', { onEvent: () => {}, onError });
+    const source = FakeEventSource.last;
+    source.onerror();
+    expect(onError).toHaveBeenLastCalledWith({ closed: false });
+    source.readyState = FakeEventSource.CLOSED;
+    source.onerror();
+    expect(onError).toHaveBeenLastCalledWith({ closed: true });
   });
 });

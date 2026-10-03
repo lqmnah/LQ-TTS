@@ -2,6 +2,17 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 let current = null;
 
+/** Makes `audio` the one playing element on the page, pausing whichever played before. */
+export function claimAudio(audio) {
+  if (current && current !== audio) current.pause();
+  current = audio;
+}
+
+/** Forgets `audio` if it is the registered element. */
+export function releaseAudio(audio) {
+  if (current === audio) current = null;
+}
+
 /** Plays `src`; starting one clip pauses whichever clip played before. */
 export function useAudioToggle(src) {
   const [playing, setPlaying] = useState(false);
@@ -10,7 +21,7 @@ export function useAudioToggle(src) {
 
   useEffect(() => () => {
     audioRef.current?.pause();
-    if (current === audioRef.current) current = null;
+    releaseAudio(audioRef.current);
   }, []);
 
   useEffect(() => {
@@ -37,17 +48,18 @@ export function useAudioToggle(src) {
       audio.addEventListener('ended', () => setPlaying(false));
       audioRef.current = audio;
     }
-    if (current && current !== audioRef.current) current.pause();
     const audio = audioRef.current;
-    current = audio;
+    claimAudio(audio);
     setError(false);
     try {
       await audio.play();
-    } catch {
+    } catch (err) {
+      setPlaying(false);
+      // pause() while play() is pending (second click, another clip started) is not a failure.
+      if (err?.name === 'AbortError') return;
       // Drop the failed element so the next click fetches the clip afresh.
       if (audioRef.current === audio) audioRef.current = null;
-      if (current === audio) current = null;
-      setPlaying(false);
+      releaseAudio(audio);
       setError(true);
     }
   }, [src, playing]);

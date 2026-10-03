@@ -1,6 +1,7 @@
-import { act, screen, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useI18n } from '../i18n/index.jsx';
 import { ME, renderRoutes } from '../test/render.jsx';
 import JobPage from './JobPage.jsx';
 
@@ -100,7 +101,8 @@ describe('JobPage', () => {
   });
 
   it('switches revisions for downloads', async () => {
-    api.job.mockResolvedValue(job({ status: 'done', files: FILES, revision: 2, revisions: [1, 2] }));
+    const files2 = Object.fromEntries(Object.entries(FILES).map(([k, v]) => [k, v.replace('revision=1', 'revision=2')]));
+    api.job.mockResolvedValue(job({ status: 'done', files: files2, revision: 2, revisions: [1, 2] }));
     api.sentences.mockResolvedValue([sentence(0, 'done'), sentence(1, 'done')]);
     const user = userEvent.setup();
     renderRoutes(routes, { path: '/jobs/j1' });
@@ -149,7 +151,9 @@ describe('JobPage', () => {
     api.sentences.mockResolvedValue([sentence(0, 'done')]);
     renderRoutes(routes, { path: '/jobs/j1' });
     const row = await screen.findByTestId('sentence-0');
-    expect(within(row).getByRole('button', { name: 'Ubah' })).toBeDisabled();
+    expect(within(row).getByRole('button', { name: 'Ubah' })).toHaveAttribute('aria-disabled', 'true');
+    await userEvent.setup().click(within(row).getByRole('button', { name: 'Ubah' }));
+    expect(within(row).queryByLabelText('Teks kalimat')).not.toBeInTheDocument();
   });
 
   it('shows the busy reason when a regenerate is refused', async () => {
@@ -185,5 +189,113 @@ describe('JobPage', () => {
     expect(await screen.findByTestId('download-mp3')).toHaveAttribute('href', '/api/jobs/j1/files/final.mp3?revision=1');
     expect(screen.getByTestId('download-mp3')).toHaveAttribute('download', 'lq-tts-j1-r1.mp3');
     expect(screen.getByTestId('final-audio')).toHaveAttribute('src', '/api/jobs/j1/files/final.mp3?revision=1');
+  });
+
+  it('shows a failed delete as a translated notice that follows the language', async () => {
+    const { ApiError } = await import('../lib/api.js');
+    function English() {
+      const { setLang } = useI18n();
+      return <button type="button" onClick={() => setLang('en')}>to-en</button>;
+    }
+    const withSwitch = [{ path: '/jobs/:id', element: <><JobPage /><English /></> }];
+    api.job.mockResolvedValue(job({ status: 'done', files: FILES }));
+    api.sentences.mockResolvedValue([sentence(0, 'done')]);
+    api.deleteJob.mockRejectedValue(new ApiError(503, 'engine_unavailable', ''));
+    const user = userEvent.setup();
+    renderRoutes(withSwitch, { path: '/jobs/j1' });
+    await user.click(await screen.findByRole('button', { name: 'Hapus voiceover' }));
+    await user.click(screen.getAllByRole('button', { name: 'Hapus voiceover' }).at(-1));
+    expect(await screen.findByText('Mesin suara sedang tidak dapat dihubungi. Coba lagi sebentar lagi.')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'to-en' }));
+    expect(screen.getByText('The voice engine is unreachable right now. Try again shortly.')).toBeInTheDocument();
+  });
+
+  it('moves focus into the delete prompt and back on cancel', async () => {
+    api.job.mockResolvedValue(job({ status: 'done', files: FILES }));
+    api.sentences.mockResolvedValue([sentence(0, 'done')]);
+    const user = userEvent.setup();
+    renderRoutes(routes, { path: '/jobs/j1' });
+    await user.click(await screen.findByRole('button', { name: 'Hapus voiceover' }));
+    const confirm = screen.getByRole('button', { name: 'Hapus voiceover' });
+    expect(confirm).toHaveFocus();
+    expect(confirm).toHaveAccessibleDescription('Hapus voiceover ini beserta semua revisinya? Tindakan ini tidak bisa dibatalkan.');
+    await user.click(screen.getByRole('button', { name: 'Batal' }));
+    expect(screen.getByRole('button', { name: 'Hapus voiceover' })).toHaveFocus();
+  });
+
+  it('focuses the sentence editor and returns focus to Edit on cancel and after a regenerate', async () => {
+    api.job.mockResolvedValue(job({ status: 'done', files: FILES }));
+    api.sentences.mockResolvedValue([sentence(0, 'done')]);
+    api.regenerate.mockResolvedValue({ revision: 2, credits: 1 });
+    const user = userEvent.setup();
+    renderRoutes(routes, { path: '/jobs/j1' });
+    const row = await screen.findByTestId('sentence-0');
+    const edit = within(row).getByRole('button', { name: 'Ubah' });
+    await user.click(edit);
+    expect(within(row).getByLabelText('Teks kalimat')).toHaveFocus();
+    await user.click(within(row).getByRole('button', { name: 'Batal' }));
+    expect(edit).toHaveFocus();
+    await user.click(edit);
+    await user.click(within(row).getByRole('button', { name: 'Buat ulang' }));
+    await waitFor(() => expect(edit).toHaveFocus());
+    expect(edit).toHaveAttribute('aria-disabled', 'true');
+  });
+
+  describe('when the event stream closes for good', () => {
+    afterEach(() => vi.useRealTimers());
+
+    it('reloads after a backoff and reopens the stream', async () => {
+      api.job.mockResolvedValue(job());
+      api.sentences.mockResolvedValue([sentence(0, 'pending'), sentence(1, 'pending')]);
+      renderRoutes(routes, { path: '/jobs/j1' });
+      await screen.findByText('0 dari 2 kalimat');
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      act(() => handlers.onError({ closed: false }));
+      expect(screen.getByText('Menyambung ulang ke progres langsung...')).toBeInTheDocument();
+      expect(close).not.toHaveBeenCalled();
+      act(() => handlers.onError({ closed: true }));
+      expect(close).toHaveBeenCalledTimes(1);
+      act(() => vi.advanceTimersByTime(1999));
+      expect(api.job).toHaveBeenCalledTimes(1);
+      await act(async () => vi.advanceTimersByTime(1));
+      expect(api.job).toHaveBeenCalledTimes(2);
+      vi.useRealTimers();
+      await waitFor(() => expect(openJobEvents).toHaveBeenCalledTimes(2));
+    });
+  });
+
+  describe('single audio', () => {
+    let play;
+    let pause;
+    beforeEach(() => {
+      play = vi.spyOn(window.HTMLMediaElement.prototype, 'play').mockImplementation(function play() {
+        this.dispatchEvent(new Event('play'));
+        return Promise.resolve();
+      });
+      pause = vi.spyOn(window.HTMLMediaElement.prototype, 'pause').mockImplementation(function pause() {
+        this.dispatchEvent(new Event('pause'));
+      });
+    });
+    afterEach(() => {
+      play.mockRestore();
+      pause.mockRestore();
+    });
+
+    it('pauses a sentence clip when the final audio plays, and the other way round', async () => {
+      api.job.mockResolvedValue(job({ status: 'done', files: FILES }));
+      api.sentences.mockResolvedValue([sentence(0, 'done')]);
+      const user = userEvent.setup();
+      renderRoutes(routes, { path: '/jobs/j1' });
+      const final = await screen.findByTestId('final-audio');
+      fireEvent.play(final);
+      await user.click(screen.getByRole('button', { name: 'Putar kalimat 1' }));
+      expect(pause.mock.contexts).toContain(final);
+      expect(screen.getByRole('button', { name: 'Putar kalimat 1' })).toHaveAttribute('aria-pressed', 'true');
+      pause.mockClear();
+      fireEvent.play(final);
+      expect(pause).toHaveBeenCalledTimes(1);
+      expect(pause.mock.contexts[0]).not.toBe(final);
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Putar kalimat 1' })).toHaveAttribute('aria-pressed', 'false'));
+    });
   });
 });

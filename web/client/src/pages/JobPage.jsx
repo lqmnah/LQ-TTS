@@ -1,5 +1,5 @@
 import { ArrowLeftIcon, ArrowsClockwiseIcon, DownloadSimpleIcon, PencilSimpleIcon, StopIcon, TrashIcon, WarningCircleIcon } from '@phosphor-icons/react';
-import { useCallback, useEffect, useReducer, useState } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router';
 import PlayButton from '../components/PlayButton.jsx';
 import { JobStatus, SentenceStatus } from '../components/status.jsx';
@@ -10,6 +10,7 @@ import { errorText, jobFailureText } from '../lib/errors.js';
 import { formatDateTime, formatDuration } from '../lib/format.js';
 import { charCount, creditsFor, formatNumber } from '../lib/pricing.js';
 import { TERMINAL, doneCount, progressReducer } from '../lib/progress.js';
+import { claimAudio, releaseAudio } from '../lib/useAudioToggle.js';
 import { useSession } from '../lib/session.jsx';
 
 const FILE_ORDER = ['final.mp3', 'final.wav', 'subs.srt', 'subs.vtt'];
@@ -19,6 +20,7 @@ const revisionOf = (url) => {
   const match = /[?&]revision=(\d+)/.exec(url ?? '');
   return match ? Number(match[1]) : null;
 };
+const RETRY_DELAYS_MS = [2000, 5000, 10000];
 
 export default function JobPage() {
   const { id } = useParams();
@@ -59,14 +61,32 @@ export default function JobPage() {
   const status = progress?.status ?? null;
   const live = status !== null && !TERMINAL.has(status);
 
+  const attemptRef = useRef(0);
+  const [streamKey, setStreamKey] = useState(0);
+
   useEffect(() => {
     if (!live) return undefined;
     let finished = false;
+    let timer = null;
     setConnection('connecting');
     const close = openJobEvents(id, {
-      onOpen: () => setConnection('live'),
-      onError: () => {
-        if (!finished) setConnection('reconnecting');
+      onOpen: () => {
+        attemptRef.current = 0;
+        setConnection('live');
+      },
+      onError: (info) => {
+        if (finished) return;
+        setConnection('reconnecting');
+        if (!info?.closed) return;
+        // The browser gave up (engine restart, 401, 404): reload the snapshot after a backoff, then reopen.
+        finished = true;
+        close();
+        const delay = RETRY_DELAYS_MS[Math.min(attemptRef.current, RETRY_DELAYS_MS.length - 1)];
+        attemptRef.current += 1;
+        timer = setTimeout(async () => {
+          await load();
+          setStreamKey((k) => k + 1);
+        }, delay);
       },
       onEvent: (event) => {
         dispatch(event);
@@ -83,9 +103,10 @@ export default function JobPage() {
     });
     return () => {
       finished = true;
+      clearTimeout(timer);
       close();
     };
-  }, [id, live, load, refresh]);
+  }, [id, live, load, refresh, streamKey]);
 
   function onRegenerated(idx, result) {
     dispatch({ type: 'regenerate_started', idx, revision: result.revision });
@@ -100,7 +121,7 @@ export default function JobPage() {
     try {
       await api.cancelJob(id);
     } catch (err) {
-      setActionError(err?.code === 'not_regeneratable' ? t('job.cancel_busy') : errorText(t, err));
+      setActionError({ source: 'cancel', err });
       setCanceling(false);
     }
   }
@@ -113,7 +134,7 @@ export default function JobPage() {
       refresh();
       navigate('/history', { replace: true });
     } catch (err) {
-      setActionError(err);
+      setActionError({ source: 'delete', err });
       setDeleting(false);
     }
   }
@@ -138,7 +159,7 @@ export default function JobPage() {
   const files = FILE_ORDER.filter((name) => job.files?.[name]);
   const audioName = files.find((name) => name === 'final.mp3' || name === 'final.wav') ?? null;
   // Files point at the newest revision on disk, which lags job.revision while a regenerate runs.
-  const fileRevision = status === 'done' ? job.revision : (revisionOf(job.files?.[files[0]]) ?? job.revision);
+  const fileRevision = revisionOf(job.files?.[files[0]]) ?? job.revision;
   const revisions = job.revisions.filter((r) => r <= fileRevision);
   const shownRevision = revision ?? fileRevision;
   const fileUrl = (name) => (shownRevision === fileRevision ? job.files[name] : urls.file(id, name, shownRevision));
@@ -201,7 +222,11 @@ export default function JobPage() {
           <Notice tone={status === 'canceled' ? 'info' : 'danger'}>{jobFailureText(t, status, progress.errorCode)}</Notice>
         ) : null}
         {needsReview > 0 ? <Notice tone="warning">{tn('job.needs_review', needsReview, { count: formatNumber(needsReview, lang) })}</Notice> : null}
-        {actionError ? <Notice tone="danger">{actionError}</Notice> : null}
+        {actionError ? (
+          <Notice tone="danger">
+            {actionError.source === 'cancel' && actionError.err?.code === 'not_regeneratable' ? t('job.cancel_busy') : errorText(t, actionError.err)}
+          </Notice>
+        ) : null}
       </section>
 
       {files.length ? (
@@ -218,7 +243,16 @@ export default function JobPage() {
             ) : null}
           </div>
           {audioName ? (
-            <audio key={`${audioName}-${shownRevision}`} data-testid="final-audio" controls preload="metadata" src={fileUrl(audioName)} className="w-full" />
+            <audio
+              key={`${audioName}-${shownRevision}`}
+              data-testid="final-audio"
+              controls
+              preload="metadata"
+              src={fileUrl(audioName)}
+              onPlay={(e) => claimAudio(e.currentTarget)}
+              onPause={(e) => releaseAudio(e.currentTarget)}
+              className="w-full"
+            />
           ) : null}
           <div className="flex flex-wrap gap-2">
             {files.map((name) => (
@@ -249,17 +283,7 @@ export default function JobPage() {
         </ol>
       </section>
 
-      <section className="flex flex-wrap items-center gap-3 border-t border-line pt-6">
-        {confirmDelete ? (
-          <>
-            <p className="text-sm text-ink">{t('job.delete_confirm')}</p>
-            <Button variant="danger" loading={deleting} onClick={remove}>{t('job.delete')}</Button>
-            <Button variant="ghost" disabled={deleting} onClick={() => setConfirmDelete(false)}>{t('common.cancel')}</Button>
-          </>
-        ) : (
-          <Button variant="ghost" icon={TrashIcon} onClick={() => setConfirmDelete(true)}>{t('job.delete')}</Button>
-        )}
-      </section>
+      <DeleteJob deleting={deleting} confirming={confirmDelete} onConfirm={remove} onToggle={setConfirmDelete} />
     </div>
   );
 }
@@ -271,6 +295,9 @@ function SentenceRow({ jobId, sentence, live, arrived, audioVersion, editable, o
   const [style, setStyle] = useState(sentence.style ?? '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const editRef = useRef(null);
+  const textRef = useRef(null);
+  const wasEditing = useRef(false);
 
   useEffect(() => {
     if (!editing) {
@@ -278,6 +305,12 @@ function SentenceRow({ jobId, sentence, live, arrived, audioVersion, editable, o
       setStyle(sentence.style ?? '');
     }
   }, [editing, sentence.text, sentence.style]);
+
+  useEffect(() => {
+    if (editing) textRef.current?.focus();
+    else if (wasEditing.current) editRef.current?.focus();
+    wasEditing.current = editing;
+  }, [editing]);
 
   const status = live?.status ?? sentence.status;
   const score = live ? live.score : sentence.score;
@@ -323,14 +356,19 @@ function SentenceRow({ jobId, sentence, live, arrived, audioVersion, editable, o
           </div>
           <div className="flex shrink-0 items-center gap-1">
             <PlayButton src={finished ? urls.sentenceAudio(jobId, sentence.idx, audioVersion) : null} label={t('job.sentence.play', { n })} />
+            {/* aria-disabled, not disabled: focus returns here after a regenerate, while the job is busy again. */}
             <Button
+              ref={editRef}
               variant="ghost"
               size="sm"
               icon={PencilSimpleIcon}
-              disabled={!editable}
+              aria-disabled={!editable || undefined}
               aria-expanded={editing}
               aria-controls={`${base}-editor`}
-              onClick={() => setEditing((v) => !v)}
+              onClick={() => {
+                if (editable || editing) setEditing((v) => !v);
+              }}
+              className="aria-disabled:cursor-not-allowed aria-disabled:text-dim aria-disabled:hover:bg-transparent aria-disabled:active:scale-100"
             >
               {t('job.sentence.edit')}
             </Button>
@@ -339,7 +377,7 @@ function SentenceRow({ jobId, sentence, live, arrived, audioVersion, editable, o
         {editing ? (
           <form id={`${base}-editor`} onSubmit={regenerate} className="mt-3 flex flex-col gap-4 rounded-control bg-surface-2 p-4">
             <Field id={`${base}-text`} label={t('job.sentence.text')} help={t('job.sentence.one_sentence')}>
-              <textarea id={`${base}-text`} rows={2} value={text} onChange={(e) => setText(e.target.value)} aria-describedby={`${base}-text-help`} className={`${inputClass} py-2 leading-relaxed`} />
+              <textarea ref={textRef} id={`${base}-text`} rows={2} value={text} onChange={(e) => setText(e.target.value)} aria-describedby={`${base}-text-help`} className={`${inputClass} py-2 leading-relaxed`} />
             </Field>
             <Field id={`${base}-style`} label={t('job.sentence.style')}>
               <input id={`${base}-style`} value={style} maxLength={200} placeholder={t('job.sentence.style_placeholder')} onChange={(e) => setStyle(e.target.value)} className={`${inputClass} h-11`} />
@@ -354,6 +392,33 @@ function SentenceRow({ jobId, sentence, live, arrived, audioVersion, editable, o
         ) : null}
       </div>
     </li>
+  );
+}
+
+function DeleteJob({ deleting, confirming, onConfirm, onToggle }) {
+  const { t } = useI18n();
+  const triggerRef = useRef(null);
+  const confirmRef = useRef(null);
+  const wasConfirming = useRef(false);
+
+  useEffect(() => {
+    if (confirming) confirmRef.current?.focus();
+    else if (wasConfirming.current) triggerRef.current?.focus();
+    wasConfirming.current = confirming;
+  }, [confirming]);
+
+  return (
+    <section className="flex flex-wrap items-center gap-3 border-t border-line pt-6">
+      {confirming ? (
+        <>
+          <p id="job-delete-prompt" role="alert" className="text-sm text-ink">{t('job.delete_confirm')}</p>
+          <Button ref={confirmRef} variant="danger" loading={deleting} aria-describedby="job-delete-prompt" onClick={onConfirm}>{t('job.delete')}</Button>
+          <Button variant="ghost" disabled={deleting} onClick={() => onToggle(false)}>{t('common.cancel')}</Button>
+        </>
+      ) : (
+        <Button ref={triggerRef} variant="ghost" icon={TrashIcon} onClick={() => onToggle(true)}>{t('job.delete')}</Button>
+      )}
+    </section>
   );
 }
 

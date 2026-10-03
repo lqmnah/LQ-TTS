@@ -238,7 +238,7 @@ const EVENT_TYPES = /** @type {const} */ (['sentence_done', 'job_done', 'job_fai
 /**
  * Live job events. The browser reconnects by itself after a drop; the reducer treats replayed events idempotently.
  * @param {string} jobId
- * @param {{onEvent: (event: any) => void, onOpen?: () => void, onError?: () => void}} handlers
+ * @param {{onEvent: (event: any) => void, onOpen?: () => void, onError?: (info: {closed: boolean}) => void}} handlers `closed`: the browser gave up and will not reconnect.
  * @returns {() => void} close
  */
 export function openJobEvents(jobId, { onEvent, onOpen, onError }) {
@@ -255,6 +255,6 @@ export function openJobEvents(jobId, { onEvent, onOpen, onError }) {
     });
   }
   source.onopen = () => onOpen?.();
-  source.onerror = () => onError?.();
+  source.onerror = () => onError?.({ closed: source.readyState === EventSource.CLOSED });
   return () => source.close();
 }
