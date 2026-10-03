@@ -35,6 +35,7 @@ export async function startFakeEngine({ port = 0, token } = {}) {
     openUploads: 0,
     heldUploads: 0,
     voiceGate: null,
+    listDelayMs: 0,
     callsTo(method, route) {
       return this.calls.filter((c) => c.method === method && c.route === route);
     },
@@ -162,6 +163,7 @@ export async function startFakeEngine({ port = 0, token } = {}) {
       if (req.method === 'POST' && route === '/v1/voices') return await receiveVoice(req, res, call);
       if (req.method === 'GET' && route === '/v1/voices') {
         const owner = url.searchParams.get('owner_ref');
+        if (state.listDelayMs) await sleep(state.listDelayMs);
         if (!owner) return fail(res, 400, 'invalid_request', 'query.owner_ref: Field required');
         const list = [...state.voices.values()].filter((v) => v.owner_ref === owner).reverse();
         return json(res, 200, list.map(voiceOut));

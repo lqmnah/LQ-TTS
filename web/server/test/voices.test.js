@@ -1,7 +1,9 @@
 import crypto from 'node:crypto';
 import http from 'node:http';
+import express from 'express';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { WAV_BYTES } from './fakes/fake-engine.js';
+import { voicesRouter } from '../routes/voices.js';
 import { USERS, binary, startHarness } from './helpers.js';
 
 const sha = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
@@ -197,11 +199,8 @@ describe('voice upload concurrency and client aborts', () => {
     expect(await leases()).toEqual([]);
   });
 
-  it('aborts the engine upload and releases the lease when the browser goes away', async () => {
-    const cookie = await h.login(USERS.budi);
-    const server = h.app.listen(0, '127.0.0.1');
-    await new Promise((resolve) => server.once('listening', resolve));
-    const voicesBefore = h.engine.state.voices.size;
+  // Sends the fields and the start of a file, then leaves the request open so the test can drop it.
+  function partialUpload(server, cookie, fileBytes) {
     const boundary = 'abort-test-boundary';
     const req = http.request({
       host: '127.0.0.1', port: server.address().port, path: '/api/voices', method: 'POST',
@@ -211,13 +210,96 @@ describe('voice upload concurrency and client aborts', () => {
     const field = (name, value) => `--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`;
     req.write(field('name', 'Abort') + field('consent', 'true')
       + `--${boundary}\r\nContent-Disposition: form-data; name="audio"; filename="a.wav"\r\nContent-Type: audio/wav\r\n\r\n`);
-    req.write(crypto.randomBytes(2 * 1024 * 1024));
-    expect(await until(() => h.engine.state.openUploads === 1, 3000)).toBe(true);
-    req.destroy();
+    req.write(crypto.randomBytes(fileBytes));
+    return req;
+  }
+  async function withServer(work) {
+    const server = h.app.listen(0, '127.0.0.1');
+    await new Promise((resolve) => server.once('listening', resolve));
     try {
+      await work(server);
+    } finally {
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+    }
+  }
+
+  it('aborts the engine upload and releases the lease when the browser goes away', async () => {
+    const cookie = await h.login(USERS.budi);
+    const voicesBefore = h.engine.state.voices.size;
+    await withServer(async (server) => {
+      const req = partialUpload(server, cookie, 2 * 1024 * 1024);
+      expect(await until(() => h.engine.state.openUploads === 1, 3000)).toBe(true);
+      req.destroy();
       expect(await until(() => h.engine.state.openUploads === 0)).toBe(true);
       expect(await until(async () => (await leases()).length === 0)).toBe(true);
       expect(h.engine.state.voices.size).toBe(voicesBefore);
+    });
+  });
+
+  it('stays up when the browser goes away before the file stream is being read', async () => {
+    const cookie = await h.login(USERS.budi);
+    const budi = h.as(cookie);
+    const voicesBefore = h.engine.state.voices.size;
+    const crashes = [];
+    const onCrash = (err) => crashes.push(err);
+    process.on('uncaughtException', onCrash);
+    h.engine.state.listDelayMs = 300;
+    try {
+      await withServer(async (server) => {
+        const lists = h.engine.state.callsTo('GET', '/v1/voices').length;
+        const req = partialUpload(server, cookie, 64 * 1024);
+        // The route is now waiting on the voice count, so nothing reads the file stream yet.
+        expect(await until(() => h.engine.state.callsTo('GET', '/v1/voices').length > lists, 3000)).toBe(true);
+        req.destroy();
+        expect(await until(async () => (await leases()).length === 0 && h.engine.state.callsTo('GET', '/v1/voices').length > lists)).toBe(true);
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        h.engine.state.listDelayMs = 0;
+        expect((await budi.get('/api/voices')).status).toBe(200);
+        expect(await leases()).toEqual([]);
+        expect(h.engine.state.voices.size).toBe(voicesBefore);
+      });
+    } finally {
+      h.engine.state.listDelayMs = 0;
+      process.off('uncaughtException', onCrash);
+    }
+    expect(crashes.map(String)).toEqual([]);
+  });
+
+  it('settles when the browser left while authentication was still running', async () => {
+    const outcomes = [];
+    let reqGone;
+    let entered;
+    const gone = new Promise((resolve) => {
+      reqGone = resolve;
+    });
+    const inAuth = new Promise((resolve) => {
+      entered = resolve;
+    });
+    // A stand-in for the slow async requireAuth: it only continues once the client has gone.
+    const app = express()
+      .use(async (req, res, next) => {
+        req.on('close', reqGone);
+        entered();
+        await gone;
+        await new Promise((resolve) => setImmediate(resolve));
+        req.session = { user_id: 'budi', paid: true };
+        next();
+      })
+      .use('/api', voicesRouter(h.ctx))
+      // eslint-disable-next-line no-unused-vars
+      .use((err, req, res, next) => {
+        outcomes.push(err.code);
+        res.destroy();
+      });
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise((resolve) => server.once('listening', resolve));
+    try {
+      const req = partialUpload(server, 'x=y', 1024);
+      await inAuth;
+      req.destroy();
+      expect(await until(() => outcomes.length > 0)).toBe(true);
+      expect(outcomes).toEqual(['invalid_request']);
     } finally {
       server.closeAllConnections();
       await new Promise((resolve) => server.close(resolve));

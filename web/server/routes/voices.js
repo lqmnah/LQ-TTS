@@ -42,6 +42,9 @@ function receiveUpload(req, { maxBytes, onFile }) {
       fields[name] = value;
     });
     bb.on('file', (name, file, info) => {
+      // busboy destroys an unread file stream with an error when the client drops; unhandled, that kills the
+      // process. The consumer in engine.uploadVoice still sees the error through its iterator.
+      file.on('error', () => {});
       if (name !== 'audio' || work) {
         file.resume();
         return;
@@ -62,6 +65,12 @@ function receiveUpload(req, { maxBytes, onFile }) {
         ? new ApiError('invalid_request', 'an audio file is required')
         : new ApiError('consent_required', 'consent is required to clone a voice'));
     });
+    // The client may have left during the async middleware, before the close listener above existed.
+    if (req.destroyed && !req.complete) {
+      bb.destroy();
+      reject(new ApiError('invalid_request', 'the upload was interrupted'));
+      return;
+    }
     req.pipe(bb);
   });
 }
