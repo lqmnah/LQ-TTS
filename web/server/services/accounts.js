@@ -32,7 +32,9 @@ export function createAccounts({ sessions, lqstudio, engine, config }) {
       }
       if (session.balance !== null) {
         // LQ-Studio down: serve the cached copy, and ask again only after OUTAGE_RETRY_MS so every route stays fast.
-        return (await sessions.deferRefresh(session.id, session.user_id, ME_CACHE_MS, OUTAGE_RETRY_MS)) ?? session;
+        // A lost race (another request already deferred these rows) still must not make this request ask again.
+        const deferred = await sessions.deferRefresh(session.id, session.user_id, ME_CACHE_MS, OUTAGE_RETRY_MS);
+        return deferred ?? { ...session, refreshed_at: new Date(Date.now() - ME_CACHE_MS + OUTAGE_RETRY_MS) };
       }
       throw lqError(err);
     }

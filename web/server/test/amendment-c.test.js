@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { UpstreamUnavailable } from '../clients/http.js';
 import { USERS, startHarness } from './helpers.js';
 
 const hash = (cookie) => crypto.createHash('sha256').update(cookie.split('=')[1]).digest('hex');
@@ -176,5 +177,44 @@ describe('C1 amendment C', () => {
       h.lq.state.down = false;
     }
     expect(h.lq.state.callsTo('/users/budi').length).toBe(calls + 1);
+  });
+
+  it('waits on a hanging LQ-Studio at most once per request, even when another request wins the deferral', async () => {
+    const a = await h.login(USERS.budi);
+    const b = await h.login(USERS.budi);
+    await expire(a);
+    await expire(b);
+    const { getUser } = h.ctx.lqstudio;
+    const { deferRefresh } = h.ctx.sessions;
+    let calls = 0;
+    h.ctx.lqstudio.getUser = async () => {
+      calls += 1;
+      await new Promise((resolve) => setTimeout(resolve, 150)); // hangs, then times out
+      throw new UpstreamUnavailable('lqstudio', new Error('timeout'));
+    };
+    // The first deferral wins and moves every due session; the other one finds no row left to move.
+    let won = false;
+    h.ctx.sessions.deferRefresh = async (...args) => {
+      if (won) return null;
+      won = true;
+      return deferRefresh(...args);
+    };
+    try {
+      const [ra, rb] = await Promise.all([h.as(a).get('/api/me'), h.as(b).get('/api/me')]);
+      expect([ra.status, rb.status]).toEqual([200, 200]);
+      expect(calls).toBe(2); // one per request, in requireAuth; /api/me's own fresh() reuses the deferral
+    } finally {
+      h.ctx.lqstudio.getUser = getUser;
+      h.ctx.sessions.deferRefresh = deferRefresh;
+    }
+  });
+
+  it('clears the session cookie when a request ends the session', async () => {
+    const cookie = await h.login(USERS.poor);
+    h.lq.bumpTv('poor');
+    await expire(cookie);
+    const res = await h.as(cookie).get('/api/jobs');
+    expect(res.status).toBe(401);
+    expect(res.headers['set-cookie']?.some((c) => /^lqtts_sid=;.*Expires=Thu, 01 Jan 1970/.test(c))).toBe(true);
   });
 });

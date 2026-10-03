@@ -3,6 +3,7 @@ import { ME_CACHE_MS } from '../services/accounts.js';
 
 export const COOKIE = 'lqtts_sid';
 const MAX_AGE_MS = 30 * 24 * 3600 * 1000;
+const SESSION_ENDED = new Set(['unauthorized', 'suspended', 'needs_verification']);
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 export function readSessionCookie(req) {
@@ -42,7 +43,17 @@ export function requireAuth({ sessions, accounts, config }) {
     if (await sessions.slide(session)) setSessionCookie(res, raw, config);
     // Once the account cache is due, every route re-checks it: tokenVersion, suspension and verification apply everywhere.
     const due = Date.now() - new Date(session.refreshed_at).getTime() >= ME_CACHE_MS;
-    req.session = due ? await accounts.fresh(session) : session;
+    if (due) {
+      try {
+        req.session = await accounts.fresh(session);
+      } catch (err) {
+        // The session just ended (slide may have re-set the cookie above): tell the browser to drop it.
+        if (err instanceof ApiError && SESSION_ENDED.has(err.code)) clearSessionCookie(res, config);
+        throw err;
+      }
+    } else {
+      req.session = session;
+    }
     req.sessionRaw = raw;
     next();
   };
