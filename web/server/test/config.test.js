@@ -46,4 +46,10 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ ...base, LQSTUDIO_TOKEN: 'short' })).toThrow('at least 32');
     expect(() => loadConfig({ ...base, DB_SCHEMA: 'x"; drop' })).toThrow('DB_SCHEMA');
   });
+  it('requires RECONCILE_INTERVAL_MS to be a whole number of milliseconds, at least 1000', () => {
+    expect(loadConfig({ ...base, RECONCILE_INTERVAL_MS: '1000' }).reconcileIntervalMs).toBe(1000);
+    for (const bad of ['999', '0', '-5000', '1500.5', 'abc', '1e9x']) {
+      expect(() => loadConfig({ ...base, RECONCILE_INTERVAL_MS: bad })).toThrow('RECONCILE_INTERVAL_MS');
+    }
+  });
 });

@@ -13,7 +13,13 @@ export const PRICING = Object.freeze({
 });
 
 const trimSlash = (url) => url.replace(/\/+$/, '');
-
+const intervalMs = (raw) => {
+  const ms = Number(raw || 60000);
+  if (!Number.isInteger(ms) || ms < 1000 || (raw && !/^\d+$/.test(raw))) {
+    throw new Error('RECONCILE_INTERVAL_MS must be a whole number of milliseconds, at least 1000');
+  }
+  return ms;
+};
 export function loadConfig(env = process.env) {
   const req = (key) => {
     const value = env[key];
@@ -42,7 +48,7 @@ export function loadConfig(env = process.env) {
     cookieSecure: env.COOKIE_SECURE !== 'false',
     clientDist: path.resolve(env.CLIENT_DIST || path.join(WEB_DIR, 'client', 'dist')),
     maxUploadBytes: Number(env.MAX_UPLOAD_BYTES || 99614720), // 95 MB: Cloudflare rejects bodies over 100 MB
-    reconcileIntervalMs: Number(env.RECONCILE_INTERVAL_MS || 60000),
+    reconcileIntervalMs: intervalMs(env.RECONCILE_INTERVAL_MS),
     ...PRICING,
   });
 }

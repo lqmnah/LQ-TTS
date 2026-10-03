@@ -1,4 +1,5 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { UpstreamUnavailable } from '../clients/http.js';
 import { createReconciler } from '../services/reconcile.js';
 import { USERS, startHarness } from './helpers.js';
 
@@ -18,6 +19,10 @@ describe('reconciliation', () => {
   });
   beforeEach(() => {
     h.lq.state.users.get('ana').balance = 100;
+  });
+  afterEach(async () => {
+    // no held charge leaks into the next test's pass
+    await h.pool.query(`UPDATE charges SET state = 'refunded', resolved_at = now() WHERE state = 'held'`);
   });
   const job = async (text = 'Halo.') => (await ana.post('/api/jobs', { voiceId: voice.id, text })).body.id;
   const lastCharge = async (jobId) => (await h.pool.query('SELECT * FROM charges WHERE job_id = $1 ORDER BY id DESC LIMIT 1', [jobId])).rows[0];
@@ -48,6 +53,9 @@ describe('reconciliation', () => {
       expect(h.lq.state.net(c.hold_id)).toBe(0);
     }
     expect(h.lq.state.users.get('ana').balance).toBe(99);
+    const { rows } = await h.pool.query('SELECT id, deleted_at FROM jobs WHERE id = ANY($1)', [[done, gone]]);
+    const deleted = Object.fromEntries(rows.map((r) => [r.id, r.deleted_at !== null]));
+    expect(deleted).toEqual({ [done]: false, [gone]: true });
   });
 
   it('leaves running jobs and young charges alone without counting attempts', async () => {
@@ -131,5 +139,86 @@ describe('reconciliation', () => {
     } finally {
       await looping.stop();
     }
+  });
+  const engineDown = (calls = []) => ({
+    calls,
+    getJob: (jobId) => {
+      calls.push(jobId);
+      return Promise.reject(new UpstreamUnavailable('engine'));
+    },
+  });
+
+  it('puts charges that keep failing behind fresh ones', async () => {
+    const stuck = [await job(), await job(), await job()];
+    const fresh = await job();
+    h.engine.setJob(fresh, { status: 'done' });
+    for (const id of [...stuck, fresh]) await age(id);
+    await h.pool.query('UPDATE charges SET attempts = 5 WHERE job_id = ANY($1)', [stuck]);
+    const down = engineDown();
+    const engine = { getJob: (id) => (stuck.includes(id) ? down.getJob(id) : h.ctx.engine.getJob(id)) };
+    await createReconciler({ ...h.ctx, engine }, { batchSize: 2 }).runOnce();
+    expect((await lastCharge(fresh)).state).toBe('settled');
+  });
+
+  it('asks the engine once per job per pass and records a failure on every charge of it', async () => {
+    const id = await job('Satu. Dua.');
+    for (const s of [0, 1]) {
+      const ref = `tts:${id}:r2:s${s}`;
+      await orphanCharge(ref, `('ana', '${id}', 2, 'regenerate', ${s}, 5, 1, '${ref}', now() - interval '3 minutes')`);
+    }
+    await age(id);
+    const down = engineDown();
+    await createReconciler({ ...h.ctx, engine: down }).runOnce();
+    expect(down.calls.filter((c) => c === id)).toHaveLength(1);
+    const { rows } = await h.pool.query('SELECT state, attempts FROM charges WHERE job_id = $1', [id]);
+    expect(rows).toEqual([1, 2, 3].map(() => ({ state: 'held', attempts: 1 })));
+  });
+
+  it('records no failure on a charge that was resolved in the meantime', async () => {
+    const id = await job();
+    h.engine.setJob(id, { status: 'done' });
+    await age(id);
+    await h.pool.query('UPDATE charges SET attempts = 9 WHERE job_id = $1', [id]);
+    const stale = await lastCharge(id);
+    await reconciler.runOnce();
+    expect((await lastCharge(id)).state).toBe('settled');
+    await h.ctx.charges.recordFailure(stale, new Error('late engine error'));
+    expect(await lastCharge(id)).toMatchObject({ state: 'settled', attempts: 9, last_error: null, flagged_at: null });
+    expect(h.logs.filter((l) => l.event === 'charge_flagged' && l.chargeId === stale.id)).toHaveLength(0);
+  });
+
+  it('shares one pass between concurrent runOnce calls', async () => {
+    const a = reconciler.runOnce();
+    const b = reconciler.runOnce();
+    expect(b).toBe(a);
+    await a;
+    const c = reconciler.runOnce();
+    expect(c).not.toBe(a);
+    await c;
+  });
+
+  it('stops between charges instead of finishing the pass', async () => {
+    for (const id of [await job(), await job()]) await age(id);
+    const calls = [];
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    let entered;
+    const inside = new Promise((resolve) => { entered = resolve; });
+    const engine = {
+      getJob: async (jobId) => {
+        calls.push(jobId);
+        entered();
+        await gate;
+        throw new UpstreamUnavailable('engine');
+      },
+    };
+    const r = createReconciler({ ...h.ctx, engine });
+    const pass = r.runOnce();
+    await inside;
+    const stopped = r.stop();
+    release();
+    await stopped;
+    await pass;
+    expect(calls).toHaveLength(1);
   });
 });
