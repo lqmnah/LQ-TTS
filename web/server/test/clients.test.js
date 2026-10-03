@@ -18,7 +18,10 @@ describe('upstream clients', () => {
   beforeAll(async () => {
     lq = await startFakeLqStudio({
       token: LQ_TOKEN,
-      users: [{ id: 'u1', name: 'Ana', email: 'ana@example.com', username: 'ana', password: 'pw', totp: null, verified: true, suspended: false, plan: 'free', paid: false, balance: 100 }],
+      users: [
+        { id: 'u1', name: 'Ana', email: 'ana@example.com', username: 'ana', password: 'pw', totp: null, verified: true, suspended: false, plan: 'free', paid: false, balance: 100 },
+        { id: 'u2', name: 'Budi', email: 'budi@example.com', username: 'budi', password: 'pw', totp: '123456', verified: true, suspended: false, plan: 'free', paid: false, balance: 10 },
+      ],
     });
     eng = await startFakeEngine({ token: 'engine-token' });
     lqClient = createLqStudio({ baseUrl: lq.url, token: LQ_TOKEN });
@@ -34,6 +37,58 @@ describe('upstream clients', () => {
       .rejects.toMatchObject({ name: 'UpstreamError', status: 401, code: 'invalid_credentials' });
     await expect(createLqStudio({ baseUrl: lq.url, token: 'w'.repeat(40) }).getUser('u1'))
       .rejects.toMatchObject({ status: 401, code: 'unauthorized' });
+  });
+
+  it('verify-2fa rejects a suspended account and reports an unverified one', async () => {
+    const twoFa = async () => {
+      const { challenge } = await lqClient.verify({ identifier: 'budi', password: 'pw', ip: '1.2.3.4' });
+      return lqClient.verify2fa({ challenge, code: '123456', ip: '1.2.3.4' });
+    };
+    const budi = lq.state.users.get('u2');
+    expect(await twoFa()).toMatchObject({ status: 'ok', user: { id: 'u2' } });
+    budi.suspended = true;
+    await expect(twoFa()).rejects.toMatchObject({ name: 'UpstreamError', status: 403, code: 'suspended' });
+    budi.suspended = false;
+    budi.verified = false;
+    // verify() itself stops unverified users, so mint the challenge the way a pre-verification login would have
+    lq.state.challenges.set('ch:manual', 'u2');
+    expect(await lqClient.verify2fa({ challenge: 'ch:manual', code: '123456', ip: '1.2.3.4' })).toEqual({ status: 'needs_verification' });
+    budi.verified = true;
+  });
+
+  it('holds are idempotent per ref and refuse a ref owned by another user', async () => {
+    const ref = `tts:${crypto.randomUUID()}:r1`;
+    const first = await lqClient.hold({ userId: 'u1', amount: 10, ref });
+    expect(first).toEqual({ holdId: ref, charged: 10, balance: 90 });
+    expect(await lqClient.hold({ userId: 'u1', amount: 25, ref })).toEqual(first);
+    expect(lq.state.net(ref)).toBe(10);
+    await expect(lqClient.hold({ userId: 'u2', amount: 1, ref }))
+      .rejects.toMatchObject({ name: 'UpstreamError', status: 409, code: 'ref_conflict' });
+    await lqClient.refund({ userId: 'u1', holdId: ref });
+  });
+
+  it('a short balance answers 402 with the balance', async () => {
+    const err = await lqClient.hold({ userId: 'u2', amount: 11, ref: `tts:${crypto.randomUUID()}:r1` }).catch((e) => e);
+    expect(err).toMatchObject({ name: 'UpstreamError', status: 402, code: 'insufficient_credits', body: { balance: 10 } });
+  });
+
+  it('settle rejects overspend and unknown holds; refund rejects unknown holds', async () => {
+    const ref = `tts:${crypto.randomUUID()}:r1`;
+    await lqClient.hold({ userId: 'u1', amount: 10, ref });
+    await expect(lqClient.settle({ userId: 'u1', holdId: ref, amount: 11 }))
+      .rejects.toMatchObject({ name: 'UpstreamError', status: 400, code: 'invalid_request' });
+    expect(await lqClient.settle({ userId: 'u1', holdId: ref, amount: 4 })).toEqual({ balance: 96 });
+    await expect(lqClient.settle({ userId: 'u1', holdId: 'tts:nope:r1', amount: 1 }))
+      .rejects.toMatchObject({ status: 404, code: 'not_found' });
+    await expect(lqClient.refund({ userId: 'u1', holdId: 'tts:nope:r1' }))
+      .rejects.toMatchObject({ status: 404, code: 'not_found' });
+    await expect(lqClient.settle({ userId: 'u2', holdId: ref, amount: 1 }))
+      .rejects.toMatchObject({ status: 404, code: 'not_found' });
+  });
+
+  it('ledger outages surface as unavailable', async () => {
+    lq.state.failNext.set('POST /credits/hold', 1);
+    await expect(lqClient.hold({ userId: 'u1', amount: 1, ref: `tts:${crypto.randomUUID()}:r1` })).rejects.toMatchObject({ name: 'UpstreamUnavailable', status: 503 });
   });
 
   it('reads the error code from engine bodies', async () => {

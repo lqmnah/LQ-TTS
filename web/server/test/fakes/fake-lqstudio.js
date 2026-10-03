@@ -22,6 +22,7 @@ export async function startFakeLqStudio({ port = 0, token, users = [] } = {}) {
     rateLimited: false,
     failNext: new Map(),
     challenges: new Map(),
+    holds: new Map(), // ref → { userId, charged, balance } as first answered (replays return it unchanged)
     net(ref) {
       return this.ledger.filter((l) => l.ref === ref).reduce((sum, l) => sum + (l.type === 'deduct' ? l.amount : -l.amount), 0);
     },
@@ -34,7 +35,7 @@ export async function startFakeLqStudio({ port = 0, token, users = [] } = {}) {
     const id = String(identifier ?? '').toLowerCase();
     return [...state.users.values()].find((u) => u.email.toLowerCase() === id || u.username.toLowerCase() === id);
   };
-  const hasHold = (userId, ref) => state.ledger.some((l) => l.ref === ref && l.userId === userId && l.type === 'deduct');
+  const hasHold = (userId, ref) => state.holds.get(ref)?.userId === userId;
   let challengeSeq = 0;
 
   const server = http.createServer(async (req, res) => {
@@ -73,6 +74,8 @@ export async function startFakeLqStudio({ port = 0, token, users = [] } = {}) {
         const u = state.users.get(state.challenges.get(body.challenge) ?? '');
         if (!u || String(body.code) !== u.totp) return json(res, 401, { error: 'invalid_code' });
         state.challenges.delete(body.challenge);
+        if (u.suspended) return json(res, 403, { error: 'suspended' });
+        if (!u.verified) return json(res, 200, { status: 'needs_verification' });
         return json(res, 200, { status: 'ok', user: pub(u) });
       }
       if (req.method === 'GET' && path.startsWith('/users/')) {
@@ -83,10 +86,13 @@ export async function startFakeLqStudio({ port = 0, token, users = [] } = {}) {
       if (req.method === 'POST' && path === '/credits/hold') {
         const u = state.users.get(String(body.userId));
         if (!u) return json(res, 404, { error: 'not_found' });
-        if (hasHold(u.id, body.ref)) return json(res, 200, { holdId: body.ref, charged: body.amount, balance: u.balance });
-        if (u.balance < body.amount) return json(res, 402, { error: 'insufficient_credits', message: 'not enough credits' });
+        const prior = state.holds.get(body.ref);
+        if (prior && prior.userId !== u.id) return json(res, 409, { error: 'ref_conflict' });
+        if (prior) return json(res, 200, { holdId: body.ref, charged: prior.charged, balance: prior.balance });
+        if (u.balance < body.amount) return json(res, 402, { error: 'insufficient_credits', balance: u.balance });
         u.balance -= body.amount;
         state.ledger.push({ ref: body.ref, userId: u.id, type: 'deduct', amount: body.amount });
+        state.holds.set(body.ref, { userId: u.id, charged: body.amount, balance: u.balance });
         return json(res, 200, { holdId: body.ref, charged: body.amount, balance: u.balance });
       }
       if (req.method === 'POST' && (path === '/credits/settle' || path === '/credits/refund')) {
@@ -95,6 +101,7 @@ export async function startFakeLqStudio({ port = 0, token, users = [] } = {}) {
         if (path === '/credits/settle') {
           if (!state.settled.has(body.holdId)) {
             const remainder = state.net(body.holdId) - body.amount;
+            if (remainder < 0) return json(res, 400, { error: 'invalid_request', message: 'amount exceeds the held credits' });
             if (remainder > 0) {
               u.balance += remainder;
               state.ledger.push({ ref: body.holdId, userId: u.id, type: 'refund', amount: remainder });
