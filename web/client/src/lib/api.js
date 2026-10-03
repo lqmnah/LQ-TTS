@@ -177,7 +177,13 @@ export function buildVoiceForm({ file, name, language, transcript, consent }) {
 export function createVoice(fields, { onProgress, signal } = {}) {
   const form = buildVoiceForm(fields);
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('Upload aborted', 'AbortError'));
+      return;
+    }
     const xhr = new XMLHttpRequest();
+    const onAbort = () => xhr.abort();
+    const detach = () => signal?.removeEventListener('abort', onAbort);
     xhr.open('POST', '/api/voices');
     xhr.setRequestHeader('X-Requested-With', 'lq-tts');
     xhr.setRequestHeader('Accept', 'application/json');
@@ -185,8 +191,13 @@ export function createVoice(fields, { onProgress, signal } = {}) {
       if (event.lengthComputable && onProgress) onProgress(Math.min(100, Math.round((event.loaded / event.total) * 100)));
     };
     xhr.onload = async () => {
+      detach();
       if (xhr.status >= 200 && xhr.status < 300) {
-        resolve(xhr.responseText ? JSON.parse(xhr.responseText) : null);
+        try {
+          resolve(xhr.responseText ? JSON.parse(xhr.responseText) : null);
+        } catch {
+          reject(new ApiError(xhr.status, 'generic', 'unexpected response'));
+        }
         return;
       }
       const res = new Response(xhr.responseText || null, {
@@ -198,9 +209,15 @@ export function createVoice(fields, { onProgress, signal } = {}) {
       });
       reject(notify('/voices', await toApiError(res)));
     };
-    xhr.onerror = () => reject(new ApiError(0, 'network', 'upload failed'));
-    xhr.onabort = () => reject(new DOMException('Upload aborted', 'AbortError'));
-    signal?.addEventListener('abort', () => xhr.abort());
+    xhr.onerror = () => {
+      detach();
+      reject(new ApiError(0, 'network', 'upload failed'));
+    };
+    xhr.onabort = () => {
+      detach();
+      reject(new DOMException('Upload aborted', 'AbortError'));
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
     xhr.send(form);
   });
 }

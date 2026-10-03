@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, api, buildVoiceForm, onUnauthorized, urls } from './api.js';
+import { ApiError, api, buildVoiceForm, createVoice, onUnauthorized, urls } from './api.js';
 
 const json = (status, body, headers = {}) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', ...headers } });
@@ -144,5 +144,49 @@ describe('urls', () => {
     expect(urls.sentenceAudio('j1', 4, 3)).toBe('/api/jobs/j1/sentences/4/audio?v=3');
     expect(urls.voicePreview('v1')).toBe('/api/voices/v1/preview');
     expect(urls.events('j1')).toBe('/api/jobs/j1/events');
+  });
+});
+
+class FakeXhr {
+  static last = null;
+  constructor() {
+    this.upload = {};
+    this.sent = false;
+    FakeXhr.last = this;
+  }
+  open() {}
+  setRequestHeader() {}
+  getResponseHeader(name) {
+    return name === "Content-Type" ? "text/html" : null;
+  }
+  abort() {
+    this.onabort?.();
+  }
+  send() {
+    this.sent = true;
+    queueMicrotask(() => {
+      this.status = 200;
+      this.responseText = "<html>Cloudflare</html>";
+      this.onload();
+    });
+  }
+}
+
+describe("createVoice", () => {
+  const fields = { file: new File(["RIFF"], "a.wav", { type: "audio/wav" }), name: "A", language: "id", transcript: "", consent: true };
+  beforeEach(() => {
+    FakeXhr.last = null;
+    vi.stubGlobal("XMLHttpRequest", FakeXhr);
+  });
+
+  it("rejects instead of hanging when a 2xx body is not JSON", async () => {
+    await expect(createVoice(fields)).rejects.toMatchObject({ name: "ApiError", status: 200, code: "generic" });
+  });
+
+  it("rejects an already-aborted signal without sending", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(createVoice(fields, { signal: controller.signal })).rejects.toMatchObject({ name: "AbortError" });
+    expect(FakeXhr.last).toBeNull();
   });
 });
