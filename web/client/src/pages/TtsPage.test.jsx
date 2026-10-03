@@ -1,4 +1,4 @@
-import { act, screen } from '@testing-library/react';
+import { act, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ME, renderRoutes } from '../test/render.jsx';
@@ -131,5 +131,48 @@ describe('TtsPage', () => {
     await user.click(screen.getByTestId('generate'));
     expect(await screen.findByRole('alert')).toBeInTheDocument();
     expect(screen.getByTestId('generate')).toBeEnabled();
+  });
+  it('re-reads the balance after a 402 so Generate reflects it', async () => {
+    api.createJob.mockRejectedValue(new ApiError(402, 'insufficient_credits', ''));
+    const user = userEvent.setup();
+    renderRoutes(routes);
+    await screen.findByRole('option', { name: 'Pandji' });
+    await user.click(screen.getByLabelText('Naskah'));
+    await user.paste('Halo semua.');
+    await waitFor(() => expect(api.estimate).toHaveBeenCalledTimes(1));
+    api.estimate.mockResolvedValue({ chars: 11, credits: 1, rupiah: 100, balance: 0, sentences: 1 });
+    await user.click(screen.getByTestId('generate'));
+    expect(await screen.findByText('Kredit belum cukup untuk naskah ini.')).toBeInTheDocument();
+    expect(api.me).toHaveBeenCalled();
+    expect(screen.getByTestId('generate')).toBeDisabled();
+  });
+
+  it('re-enables Generate after a top-up when the tab becomes visible again', async () => {
+    api.estimate.mockResolvedValue({ chars: 150, credits: 2, rupiah: 200, balance: 1, sentences: 1 });
+    const user = userEvent.setup();
+    renderRoutes(routes, { me: { ...ME, balance: 1 } });
+    await screen.findByRole('option', { name: 'Pandji' });
+    await user.click(screen.getByLabelText('Naskah'));
+    await user.paste(SCRIPT_150);
+    await waitFor(() => expect(api.estimate).toHaveBeenCalledTimes(1));
+    expect(screen.getByTestId('generate')).toBeDisabled();
+    api.estimate.mockResolvedValue({ chars: 150, credits: 2, rupiah: 200, balance: 500, sentences: 1 });
+    api.me.mockResolvedValue({ ...ME, balance: 500 });
+    act(() => { document.dispatchEvent(new Event('visibilitychange')); });
+    await waitFor(() => expect(screen.getByTestId('generate')).toBeEnabled());
+    expect(screen.getByTestId('balance')).toHaveTextContent('Saldo: 500 kredit');
+  });
+
+  it('clears a refused-job error once the script changes', async () => {
+    api.createJob.mockRejectedValue(new ApiError(503, 'lqstudio_unavailable', ''));
+    const user = userEvent.setup();
+    renderRoutes(routes);
+    await screen.findByRole('option', { name: 'Pandji' });
+    await user.click(screen.getByLabelText('Naskah'));
+    await user.paste('Halo semua.');
+    await user.click(screen.getByTestId('generate'));
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    await user.type(screen.getByLabelText('Naskah'), ' Lagi.');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 });

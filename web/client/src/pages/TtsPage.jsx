@@ -1,5 +1,5 @@
 import { UserSoundIcon, WaveformIcon } from '@phosphor-icons/react';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useOutletContext } from 'react-router';
 import { Button, EmptyState, Field, Notice, PageHeader, Select, Skeleton, buttonClass } from '../components/ui.jsx';
 import { useI18n } from '../i18n/index.jsx';
@@ -21,6 +21,7 @@ export default function TtsPage() {
   const [estimate, setEstimate] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
+  const [balanceTick, setBalanceTick] = useState(0);
 
   useEffect(() => {
     saveDraft(me.id, draft);
@@ -48,7 +49,21 @@ export default function TtsPage() {
       clearTimeout(timer);
       controller.abort();
     };
-  }, [trimmed, tooLong]);
+  }, [trimmed, tooLong, balanceTick]);
+
+  const { refresh } = session;
+  const recheckBalance = useCallback(() => {
+    refresh();
+    setBalanceTick((n) => n + 1);
+  }, [refresh]);
+
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') recheckBalance();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [recheckBalance]);
 
   const ready = (voices.data ?? []).filter((v) => v.status === 'ready');
   const voiceId = ready.some((v) => v.id === draft.voiceId) ? draft.voiceId : (ready[0]?.id ?? '');
@@ -59,8 +74,11 @@ export default function TtsPage() {
   const lqsDown = health?.lqstudio === 'down';
   const noFormats = draft.settings.formats.length === 0;
   const canGenerate = chars > 0 && !tooLong && voiceId !== '' && !noFormats && !short && !lqsDown && !submitting;
-  const update = (patch) => setDraft((d) => ({ ...d, ...patch }));
-  const setSetting = (key, value) => setDraft((d) => ({ ...d, settings: { ...d.settings, [key]: value } }));
+  const update = (patch) => {
+    setError(null);
+    setDraft((d) => ({ ...d, ...patch }));
+  };
+  const setSetting = (key, value) => update({ settings: { ...draft.settings, [key]: value } });
 
   async function generate() {
     setSubmitting(true);
@@ -73,6 +91,7 @@ export default function TtsPage() {
       setError(err);
       setSubmitting(false);
       if (err?.code === 'voice_not_ready') voices.reload();
+      if (err?.code === 'insufficient_credits') recheckBalance();
     }
   }
 
@@ -108,8 +127,8 @@ export default function TtsPage() {
         <aside className="flex flex-col gap-6 lg:sticky lg:top-20">
           <VoicePicker voices={voices} ready={ready} value={voiceId} onChange={(id) => update({ voiceId: id })} />
           <SettingsPanel settings={draft.settings} onSet={setSetting} onReset={() => update({ settings: normalizeSettings(DEFAULT_SETTINGS) })} noFormats={noFormats} />
-          <section className="flex flex-col gap-3" aria-live="polite">
-            <div className="text-sm">
+          <section className="flex flex-col gap-3">
+            <div className="text-sm" aria-live="polite" aria-atomic="true">
               <p data-testid="price" className="font-medium text-ink">
                 {chars > 0
                   ? tn('tts.price', credits, { credits: formatNumber(credits, lang), rupiah: formatNumber(rupiahFor(credits), lang) })
@@ -117,7 +136,7 @@ export default function TtsPage() {
               </p>
               <p data-testid="balance" className="mt-0.5 text-muted">
                 {balance === null
-                  ? <span title={t('tts.balance_unknown')}>{tn('tts.balance', 2, { balance: '–' })}</span>
+                  ? <>{tn('tts.balance', 2, { balance: '–' })}<span className="mt-0.5 block text-dim">{t('tts.balance_unknown')}</span></>
                   : tn('tts.balance', balance, { balance: formatNumber(balance, lang) })}
               </p>
             </div>
@@ -170,7 +189,7 @@ function RangeField({ id, label, value, min, max, step, display, onChange }) {
         <label htmlFor={id} className="text-sm font-medium text-ink">{label}</label>
         <output htmlFor={id} className="font-mono text-sm tabular text-muted">{display}</output>
       </div>
-      <input id={id} type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} className="h-11 w-full cursor-pointer accent-accent" />
+      <input id={id} type="range" min={min} max={max} step={step} value={value} aria-valuetext={display} onChange={(e) => onChange(Number(e.target.value))} className="h-11 w-full cursor-pointer accent-accent" />
     </div>
   );
 }
