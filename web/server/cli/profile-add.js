@@ -4,6 +4,7 @@
 //   --grace-seconds <n> (default 60): after the switch, how long to wait before the old voice may be deleted.
 //   list:           docker exec <container> node server/cli/profile-add.js --list
 // The audio arrives on stdin (docker exec -i forwards stdin only, so the metadata is a file inside the image).
+// SIGINT/SIGTERM while the new voice is not yet recorded deletes it (`voice <id> discarded (signal)`), exit 130/143.
 // Output is ids and statuses only; error text passes through redact() before it is printed.
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -88,7 +89,7 @@ async function retire(voiceId, { engine, jobsRepo }) {
   }
 }
 
-async function addProfile(ctx, args, { stdin, out, pollMs, timeoutMs, sleep, now }) {
+async function addProfile(ctx, args, { stdin, out, pollMs, timeoutMs, sleep, now, signals, exit }) {
   const { engine, profiles } = ctx;
   let raw;
   try {
@@ -106,39 +107,71 @@ async function addProfile(ctx, args, { stdin, out, pollMs, timeoutMs, sleep, now
   });
   out(`voice ${created.id} ${created.status}`);
   // Until the row is written nothing points at the new voice; on any failure it is removed again.
+  // True when the voice is gone; otherwise says why it is still there.
   const discard = async () => {
     try {
       await engine.deleteVoice(created.id);
+      return true;
     } catch (err) {
-      if (!isEngineNotFound(err)) out(`voice ${created.id} not deleted: ${cleanupCode(err)}`);
+      if (isEngineNotFound(err)) return true;
+      out(`voice ${created.id} not deleted: ${cleanupCode(err)}`);
+      return false;
     }
   };
-  let outcome;
+  // Ctrl+C or a container stop before the row is committed discards the new voice; after that it just exits,
+  // because the row already points at the new voice. The old voice is never touched from here.
+  let stopping = false;
+  let committed = false;
+  let upserting = null;
+  const stop = async (code) => {
+    if (stopping) return;
+    stopping = true;
+    await upserting?.catch(() => {});
+    if (!committed && (await discard())) out(`voice ${created.id} discarded (signal)`);
+    exit(code);
+  };
+  const onInt = () => stop(130);
+  const onTerm = () => stop(143);
+  signals.on('SIGINT', onInt);
+  signals.on('SIGTERM', onTerm);
+  const halt = () => new Promise(() => {}); // the signal handler owns the rest of this run and exits the process
   try {
-    outcome = await waitReady(engine, created.id, { pollMs, timeoutMs, sleep, now });
-  } catch (err) {
-    await discard();
-    throw err;
+    let outcome;
+    try {
+      outcome = await waitReady(engine, created.id, { pollMs, timeoutMs, sleep, now });
+    } catch (err) {
+      if (stopping) return await halt();
+      await discard();
+      throw err;
+    }
+    if (stopping) return await halt();
+    if (outcome !== 'ready') {
+      await discard();
+      out(`voice ${created.id} ${outcome}`);
+      return 1;
+    }
+    out(`voice ${created.id} ready`);
+    let previous;
+    try {
+      upserting = profiles.upsert(meta, created.id);
+      previous = await upserting;
+      committed = true;
+    } catch (err) {
+      if (stopping) return await halt();
+      await discard();
+      throw err;
+    }
+    out(`profile ${meta.slug} active voice ${created.id}`);
+    if (previous && previous !== created.id) {
+      await sleep(args.graceMs);
+      if (stopping) return await halt();
+      out(await retire(previous, ctx));
+    }
+    return 0;
+  } finally {
+    signals.off('SIGINT', onInt);
+    signals.off('SIGTERM', onTerm);
   }
-  if (outcome !== 'ready') {
-    await discard();
-    out(`voice ${created.id} ${outcome}`);
-    return 1;
-  }
-  out(`voice ${created.id} ready`);
-  let previous;
-  try {
-    previous = await profiles.upsert(meta, created.id);
-  } catch (err) {
-    await discard();
-    throw err;
-  }
-  out(`profile ${meta.slug} active voice ${created.id}`);
-  if (previous && previous !== created.id) {
-    await sleep(args.graceMs);
-    out(await retire(previous, ctx));
-  }
-  return 0;
 }
 
 async function deactivate({ profiles }, slug, out) {
@@ -168,12 +201,13 @@ async function listProfiles({ engine, profiles }, out) {
 export async function runProfileAdd({
   argv, stdin, out, err, ctx, secrets = [], pollMs = POLL_MS, timeoutMs = TIMEOUT_MS,
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), now = Date.now,
+  signals = process, exit = (code) => process.exit(code),
 }) {
   try {
     const args = parseCliArgs(argv);
     if (args.list) return await listProfiles(ctx, out);
     if (args.deactivate !== undefined) return await deactivate(ctx, args.deactivate, out);
-    return await addProfile(ctx, args, { stdin, out, pollMs, timeoutMs, sleep, now });
+    return await addProfile(ctx, args, { stdin, out, pollMs, timeoutMs, sleep, now, signals, exit });
   } catch (error) {
     err(`error: ${redact(describeError(error), secrets)}`);
     return 1;

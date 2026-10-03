@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -74,10 +75,16 @@ describe('profile-add CLI', () => {
     }
   };
 
-  async function run(argv, { sleep = finishAs('ready'), now, engine } = {}) {
+  async function run(argv, opts = {}) {
+    const { lines, errors, done } = start(argv, opts);
+    const code = await done;
+    printed.push(...lines, ...errors);
+    return { code, lines, errors, id: lines[0]?.split(' ')[1] };
+  }
+  function start(argv, { sleep = finishAs('ready'), now, engine, signals, exit } = {}) {
     const lines = [];
     const errors = [];
-    const code = await runProfileAdd({
+    const done = runProfileAdd({
       argv,
       stdin: Readable.from([AUDIO]),
       out: (line) => lines.push(line),
@@ -86,9 +93,28 @@ describe('profile-add CLI', () => {
       secrets: [ENGINE_TOKEN, LQ_TOKEN, CALLBACK_SECRET, testDatabaseUrl()],
       sleep,
       ...(now ? { now } : {}),
+      signals: signals ?? new EventEmitter(),
+      ...(exit ? { exit } : {}),
     });
+    return { lines, errors, done };
+  }
+  // Runs the CLI until a signal handler calls exit(); `onSleep(ms, signals)` decides when to send the signal.
+  async function runUntilSignal(argv, onSleep, engine) {
+    const signals = new EventEmitter();
+    let exited;
+    const exitCode = new Promise((resolve) => { exited = resolve; });
+    const never = new Promise(() => {});
+    const { lines, errors } = start(argv, {
+      engine,
+      signals,
+      exit: exited,
+      sleep: async (ms) => {
+        if (await onSleep(ms, signals)) return never; // the process would be gone: the CLI never resumes
+      },
+    });
+    const code = await exitCode;
     printed.push(...lines, ...errors);
-    return { code, lines, errors, id: lines[0]?.split(' ')[1] };
+    return { code, lines, errors, id: lines[0]?.split(' ')[1], signals };
   }
 
   it.each([
@@ -226,6 +252,56 @@ describe('profile-add CLI', () => {
       engine: down, sleep: finishAs('failed', 'no_clean_speech'),
     });
     expect(slow.lines).toContain(`voice ${slow.id} not deleted: engine_unavailable`);
+  });
+
+  it('on SIGTERM while the new voice is processing, deletes only the new voice and exits 143', async () => {
+    const meta = writeMeta({ slug: 'sig-poll' });
+    const { id: oldId } = await run(['--meta', meta, '--filename', 'a.wav']);
+    const res = await runUntilSignal(['--meta', meta, '--filename', 'b.wav'], (ms, signals) => {
+      signals.emit('SIGTERM', 'SIGTERM');
+      return true;
+    });
+    expect(res.code).toBe(143);
+    expect(res.lines).toEqual([`voice ${res.id} processing`, `voice ${res.id} discarded (signal)`]);
+    expect(h.engine.state.voices.has(res.id)).toBe(false);
+    expect(h.engine.state.voices.has(oldId)).toBe(true);
+    expect(await h.ctx.profiles.bySlug('sig-poll')).toMatchObject({ voice_id: oldId, active: true });
+  });
+
+  it('on SIGINT exits 130, and says so when the new voice cannot be deleted', async () => {
+    const stuck = {
+      ...h.ctx.engine,
+      deleteVoice: async () => { throw new UpstreamError('engine', 500, 'internal_error', 'boom'); },
+    };
+    const res = await runUntilSignal(['--meta', writeMeta({ slug: 'sig-int' }), '--filename', 'a.wav'], (ms, signals) => {
+      signals.emit('SIGINT', 'SIGINT');
+      return true;
+    }, stuck);
+    expect(res.code).toBe(130);
+    expect(res.lines).toEqual([`voice ${res.id} processing`, `voice ${res.id} not deleted: internal_error`]);
+    expect(await h.ctx.profiles.bySlug('sig-int')).toBeNull();
+  });
+
+  it('on SIGTERM during the grace window, exits 143 and deletes nothing', async () => {
+    const meta = writeMeta({ slug: 'sig-grace' });
+    const { id: oldId } = await run(['--meta', meta, '--filename', 'a.wav']);
+    const res = await runUntilSignal(['--meta', meta, '--filename', 'b.wav'], async (ms, signals) => {
+      if (ms === POLL_MS) return finishAs('ready')();
+      signals.emit('SIGTERM', 'SIGTERM');
+      return true;
+    });
+    expect(res.code).toBe(143);
+    expect(res.lines).toEqual([`voice ${res.id} processing`, `voice ${res.id} ready`, `profile sig-grace active voice ${res.id}`]);
+    expect(h.engine.state.voices.has(res.id)).toBe(true);
+    expect(h.engine.state.voices.has(oldId)).toBe(true);
+    expect((await h.ctx.profiles.bySlug('sig-grace')).voice_id).toBe(res.id);
+  });
+
+  it('removes its signal handlers when it finishes', async () => {
+    const signals = new EventEmitter();
+    const { done } = start(['--meta', writeMeta({ slug: 'sig-clean' }), '--filename', 'a.wav'], { signals });
+    expect(await done).toBe(0);
+    expect(signals.listenerCount('SIGINT') + signals.listenerCount('SIGTERM')).toBe(0);
   });
 
   it('exits 1 on a failed voice, deletes it, and leaves an existing profile on its old voice', async () => {
