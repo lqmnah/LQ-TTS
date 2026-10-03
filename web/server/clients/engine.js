@@ -1,5 +1,9 @@
 import crypto from 'node:crypto';
+import { Agent } from 'undici';
 import { parseResponse, requestJson, UpstreamUnavailable } from './http.js';
+
+// An SSE stream may stay silent for minutes between events; undici's default 300 s bodyTimeout would cut it.
+const sseDispatcher = new Agent({ bodyTimeout: 0 });
 
 export function createEngine({ baseUrl, token, timeoutMs = 15000 }) {
   const call = (method, path, body, headers) =>
@@ -26,10 +30,15 @@ export function createEngine({ baseUrl, token, timeoutMs = 15000 }) {
     deleteJob: (id) => call('DELETE', `/v1/jobs/${id}`),
 
     // Long-lived or binary responses: the caller pipes res.body. Non-2xx answers throw like requestJson.
-    async stream(path, { headers = {}, signal } = {}) {
+    // `sse: true` lifts the body idle timeout for event streams; binary relays keep the default.
+    async stream(path, { headers = {}, signal, sse = false } = {}) {
       let res;
       try {
-        res = await fetch(`${baseUrl}${path}`, { headers: { authorization: `Bearer ${token}`, ...headers }, signal });
+        res = await fetch(`${baseUrl}${path}`, {
+          headers: { authorization: `Bearer ${token}`, ...headers },
+          signal,
+          ...(sse ? { dispatcher: sseDispatcher } : {}),
+        });
       } catch (err) {
         throw new UpstreamUnavailable('engine', err);
       }
