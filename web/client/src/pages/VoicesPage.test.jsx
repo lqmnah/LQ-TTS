@@ -211,6 +211,36 @@ describe('VoicesPage', () => {
     expect(screen.queryByTestId('clone-form')).not.toBeInTheDocument();
     expect(api.voices).toHaveBeenCalledTimes(2);
     expect(api.me.mock.calls.length).toBeGreaterThan(meCalls);
+    expect(screen.getByTestId('voice-limit').parentElement).toHaveFocus();
+  });
+
+  it('moves focus to the limit notice when the last allowed voice is created', async () => {
+    const two = [voice({ id: 'a' }), voice({ id: 'b' })];
+    api.voices.mockResolvedValueOnce(two).mockResolvedValue([...two, voice({ id: 'v9', status: 'processing', previewUrl: null })]);
+    createVoice.mockResolvedValue({ id: 'v9', status: 'processing' });
+    const user = userEvent.setup();
+    renderRoutes(routes, { path: '/voices' });
+    await openFilledForm(user);
+    await user.click(screen.getByRole('button', { name: 'Mulai kloning' }));
+    expect(await screen.findByTestId('voice-limit')).toBeInTheDocument();
+    expect(screen.getByTestId('voice-limit').parentElement).toHaveFocus();
+    expect(screen.getByRole('button', { name: 'Kloning suara' })).toBeDisabled();
+  });
+
+  it('re-reads the list after a cancel once the upload reached 100 %', async () => {
+    api.voices.mockResolvedValue([]);
+    createVoice.mockImplementation((_fields, { onProgress, signal }) => new Promise((_resolve, reject) => {
+      onProgress(100);
+      signal.addEventListener('abort', () => reject(new DOMException('Upload aborted', 'AbortError')));
+    }));
+    const user = userEvent.setup();
+    renderRoutes(routes, { path: '/voices' });
+    await openFilledForm(user);
+    await user.click(screen.getByRole('button', { name: 'Mulai kloning' }));
+    await screen.findByText('Mengunggah 100%', { selector: '[data-testid="upload-live"]' });
+    await user.click(screen.getByRole('button', { name: 'Batal' }));
+    await vi.waitFor(() => expect(api.voices).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
   it('explains a 413 with the 95 MB export hint', async () => {

@@ -33,7 +33,9 @@ export default function VoicesPage() {
   const [created, setCreated] = useState(false);
   const [announcement, setAnnouncement] = useState('');
   const cloneButtonRef = useRef(null);
+  const limitRef = useRef(null);
   const returnFocus = useRef(false);
+  const followClone = useRef(false);
   const { reload, setData } = voices;
   const list = voices.data ?? [];
   const processing = list.some((v) => v.status === 'processing');
@@ -53,12 +55,6 @@ export default function VoicesPage() {
   const atLimit = loaded && used >= limit;
   const usedLabel = used === null ? '–' : formatNumber(used, lang);
 
-  // The clone button only exists while the form is closed; focus it once it is back.
-  useEffect(() => {
-    if (formOpen || !returnFocus.current) return;
-    returnFocus.current = false;
-    cloneButtonRef.current?.focus();
-  }, [formOpen]);
 
   function closeForm() {
     returnFocus.current = true;
@@ -72,15 +68,38 @@ export default function VoicesPage() {
     session.refresh();
   }
 
-  // A 403 voice_limit_reached means our count was stale: refresh both; once the list shows the limit, its notice replaces the form.
-  function onLimitReached() {
+  // A 403 voice_limit_reached means our count was stale: refreshAll re-reads both; once the list shows the limit, its notice replaces the form.
+  // Also used after a cancel, since a late abort can still leave a created voice behind.
+  function refreshAll() {
     reload();
     session.refresh();
   }
 
+
   useEffect(() => {
-    if (atLimit) setFormOpen(false);
-  }, [atLimit]);
+    if (!atLimit || !formOpen) return;
+    returnFocus.current = true;
+    setFormOpen(false);
+  }, [atLimit, formOpen]);
+
+  // Focus after the form closes: back to the clone button, or to the limit notice when that button is disabled.
+  // `followClone` covers the limit arriving after we refocused the button (its reload lands later), which would
+  // otherwise leave focus on a disabled button or drop it to <body>.
+  useEffect(() => {
+    if (formOpen) return;
+    if (atLimit) {
+      const active = document.activeElement;
+      const lost = followClone.current && (active === cloneButtonRef.current || active === document.body || !active);
+      if (returnFocus.current || lost) limitRef.current?.focus();
+      returnFocus.current = false;
+      followClone.current = false;
+      return;
+    }
+    if (!returnFocus.current) return;
+    returnFocus.current = false;
+    followClone.current = true;
+    cloneButtonRef.current?.focus();
+  }, [formOpen, atLimit]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -88,22 +107,24 @@ export default function VoicesPage() {
         title={t('voices.title')}
         subtitle={loaded || voices.error ? t('voices.usage', { count: usedLabel, limit: formatNumber(limit, lang) }) : null}
         actions={formOpen ? null : (
-          <Button ref={cloneButtonRef} variant="primary" icon={PlusIcon} disabled={!loaded || atLimit} onClick={() => { setFormOpen(true); setCreated(false); }}>
+          <Button ref={cloneButtonRef} variant="primary" icon={PlusIcon} disabled={!loaded || atLimit} onClick={() => { followClone.current = false; setFormOpen(true); setCreated(false); }}>
             {t('voices.clone')}
           </Button>
         )}
       />
       {atLimit ? (
-        <Notice
-          tone="warning"
-          testId="voice-limit"
-          action={me?.paid ? null : <a className={buttonClass('secondary', 'sm')} href={me?.topupUrl} target="_blank" rel="noreferrer">{t('voices.upgrade')}</a>}
-        >
-          {t('voices.limit', { limit: formatNumber(limit, lang) })}
-        </Notice>
+        <div ref={limitRef} tabIndex={-1} className="rounded-control outline-none">
+          <Notice
+            tone="warning"
+            testId="voice-limit"
+            action={me?.paid ? null : <a className={buttonClass('secondary', 'sm')} href={me?.topupUrl} target="_blank" rel="noreferrer">{t('voices.upgrade')}</a>}
+          >
+            {t('voices.limit', { limit: formatNumber(limit, lang) })}
+          </Notice>
+        </div>
       ) : null}
       {created && processing ? <Notice tone="success">{t('voices.form.success')}</Notice> : null}
-      {formOpen ? <CloneVoiceForm onCancel={closeForm} onCreated={onCreated} onLimitReached={onLimitReached} onAnnounce={setAnnouncement} /> : null}
+      {formOpen ? <CloneVoiceForm onCancel={closeForm} onCreated={onCreated} onLimitReached={refreshAll} onAborted={refreshAll} onAnnounce={setAnnouncement} /> : null}
       <p className="sr-only" aria-live="polite" data-testid="upload-live">{announcement}</p>
       <VoiceList
         voices={voices}
@@ -194,7 +215,7 @@ function VoiceRow({ voice, onDeleted }) {
   );
 }
 
-function CloneVoiceForm({ onCancel, onCreated, onLimitReached, onAnnounce }) {
+function CloneVoiceForm({ onCancel, onCreated, onLimitReached, onAborted, onAnnounce }) {
   const { t, lang } = useI18n();
   const [file, setFile] = useState(null);
   const [name, setName] = useState('');
@@ -263,7 +284,9 @@ function CloneVoiceForm({ onCancel, onCreated, onLimitReached, onAnnounce }) {
       abortRef.current = null;
       setProgress(null);
       if (err?.name === 'AbortError') {
+        // The body may already have reached the server, which then creates the voice anyway: re-read to show it.
         onAnnounce('');
+        onAborted();
         return;
       }
       onAnnounce('');
