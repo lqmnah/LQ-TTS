@@ -1,0 +1,5 @@
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+const envFile = fileURLToPath(new URL('../../.env', import.meta.url));
+if (!process.env.TEST_DATABASE_URL && existsSync(envFile)) process.loadEnvFile(envFile);
