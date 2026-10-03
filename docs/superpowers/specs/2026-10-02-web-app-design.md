@@ -150,3 +150,13 @@ The end-user IP comes from `CF-Connecting-IP` (set by the Cloudflare tunnel) and
 
 - Voice engine branch `feat/voice-engine` must be integrated (merge) before this app ships.
 - LQ-Studio secrets printed into an agent transcript on 2026-10-03 (JWT_SECRET, POSTGRES_PASSWORD, LQ_SOCIAL_TOKEN, SUPERADMIN_PASSWORD): rotation recommended; decision with lqmnah.
+
+## Amendment B (2026-10-03, from planning)
+
+1. **Web upload limit 95 MB** (Cloudflare caps request bodies at 100 MB on Free/Pro); client + server enforce it with code `too_large`; UI suggests MP3/M4A. The engine keeps 200 MB for internal callers. This overrides the 200 MB in §3.
+2. **Cross-host link:** instead of publishing LQ-Studio ports on Tailscale (forbidden by LQ-Studio test `client-ip-ingress`, it would let tailnet hosts forge client IPs app-wide), a host relay on lq-server (`ops/host/jembatan-tts-internal.mjs`, systemd user units) serves `100.80.128.19:3101 → 127.0.0.1:3001` and `:3112 → 127.0.0.1:3012`, forwarding only `/api/internal/tts/*` and `GET /api/health`; everything else 404.
+3. **C1 additions:** hold `409 ref_conflict`, `402` includes `balance`; settle `400 invalid_request`; settle/refund `404 not_found`, `503 ledger_unavailable`; verify-2fa `403 suspended` / `200 needs_verification`; guard errors carry `ok:false`. Settle is terminal (always writes a `tts_settle` row). Refs are opaque, `/^tts:[A-Za-z0-9:_-]{1,150}$/`; the create-job hold ref is `tts:<web uuid>:r1` (the uuid is also the engine Idempotency-Key).
+4. **LQ-Studio login/2FA logic** is extracted into `services/akun/login-verify.js` and shared by `/api/auth/login[/2fa]` and the TTS door; challenges are bound to the door that issued them; anti-replay re-checked inside the user-write lock.
+5. **C2 additions:** `internal_error` (500); missing CSRF header → `403 invalid_request`; cancel → `202 {status:"cancel_requested"}`; `/api/health` adds `signupUrl` (LQ-Studio `/signup`); relayed engine bodies send `Cache-Control: no-store`; `Me.voiceCount` may be `null` when the engine is unreachable.
+6. **Engine callers:** staging web uses engine caller `lq-tts-stg`, prod uses `lq-tts`.
+7. **Branch:** web work happens on `feat/web-app`, created in place from `feat/voice-engine` (the live engine runs from this checkout).
