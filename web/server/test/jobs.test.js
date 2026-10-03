@@ -249,11 +249,19 @@ describe('voiceover jobs', () => {
     const { rows: [{ n }] } = await h.pool.query(`SELECT count(*)::int AS n FROM charges WHERE user_id = 'ana'`);
     expect(res.body.usage).toHaveLength(n);
     expect(res.body.usage[0]).toEqual({
-      id: expect.any(String), jobId: expect.any(String), title: expect.any(String), kind: 'job',
+      id: expect.any(String), jobId: expect.any(String), title: expect.any(String), jobAvailable: true, kind: 'job',
       chars: expect.any(Number), credits: expect.any(Number), state: 'held', createdAt: expect.any(String),
     });
     expect(res.body.usage.some((u) => u.state === 'refunded')).toBe(true);
     const budiJobs = new Set((await budi.get('/api/credits')).body.usage.map((u) => u.jobId));
     expect(res.body.usage.some((u) => u.jobId && budiJobs.has(u.jobId))).toBe(false);
+  });
+
+  it('marks usage of deleted jobs as unavailable while keeping the title', async () => {
+    const { body: { id } } = await ana.post('/api/jobs', { voiceId: voice.id, text: 'Nanti dihapus.' });
+    await h.pool.query('UPDATE jobs SET deleted_at = now() WHERE id = $1', [id]);
+    const usage = (await ana.get('/api/credits')).body.usage.filter((u) => u.jobId === id);
+    expect(usage.length).toBeGreaterThan(0);
+    for (const row of usage) expect(row).toMatchObject({ title: expect.any(String), jobAvailable: false });
   });
 });

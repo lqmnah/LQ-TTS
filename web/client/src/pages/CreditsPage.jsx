@@ -28,12 +28,7 @@ export default function CreditsPage() {
             <div>
               <h2 id="balance-heading" className="text-sm font-medium text-muted">{t('credits.balance')}</h2>
               <p data-testid="credits-balance" className="mt-1 text-2xl font-semibold tabular text-ink">
-                {data.balance == null ? (
-                  <>
-                    <span aria-hidden>–</span>
-                    <span className="sr-only">{t('credits.balance_unknown')}</span>
-                  </>
-                ) : tn('credits.balance_value', data.balance, { count: formatNumber(data.balance, lang) })}
+                {data.balance == null ? <span aria-hidden>–</span> : tn('credits.balance_value', data.balance, { count: formatNumber(data.balance, lang) })}
               </p>
               {data.balance != null ? (
                 <p className="mt-0.5 font-mono text-sm tabular text-muted">{formatRupiah(rupiahFor(data.balance), lang)}</p>
@@ -51,18 +46,23 @@ export default function CreditsPage() {
           <section aria-labelledby="usage-heading" className="flex flex-col gap-3">
             <h2 id="usage-heading" className="text-lg font-semibold text-ink">{t('credits.usage')}</h2>
             {data.usage.length === 0 ? (
-              <EmptyState icon={CoinsIcon} title={t('credits.empty_title')} body={t('credits.empty_body')} />
+              <EmptyState
+                icon={CoinsIcon}
+                title={t('credits.empty_title')}
+                body={t('credits.empty_body')}
+                action={<Link to="/" className={buttonClass('primary')}>{t('credits.empty_cta')}</Link>}
+              />
             ) : (
               <div className="overflow-hidden rounded-panel border border-line bg-surface">
-                <table className="w-full table-fixed text-left text-sm">
+                <table className="w-full text-left text-sm">
                   <thead className="border-b border-line text-xs text-muted">
                     <tr>
-                      <th scope="col" className="hidden w-44 px-4 py-3 font-medium md:table-cell">{t('credits.col.date')}</th>
-                      <th scope="col" className="px-4 py-3 font-medium">{t('credits.col.voiceover')}</th>
-                      <th scope="col" className="hidden w-44 px-4 py-3 font-medium md:table-cell">{t('credits.col.kind')}</th>
-                      <th scope="col" className="hidden w-28 px-4 py-3 text-right font-medium lg:table-cell">{t('credits.col.chars')}</th>
-                      <th scope="col" className="w-20 px-4 py-3 text-right font-medium">{t('credits.col.credits')}</th>
-                      <th scope="col" className="w-32 px-4 py-3 font-medium">{t('credits.col.state')}</th>
+                      <th scope="col" className="hidden px-4 py-3 font-medium lg:table-cell">{t('credits.col.date')}</th>
+                      <th scope="col" className="w-full px-4 py-3 font-medium">{t('credits.col.voiceover')}</th>
+                      <th scope="col" className="hidden px-4 py-3 font-medium md:table-cell">{t('credits.col.kind')}</th>
+                      <th scope="col" className="hidden px-4 py-3 text-right font-medium lg:table-cell">{t('credits.col.chars')}</th>
+                      <th scope="col" className="px-4 py-3 text-right font-medium">{t('credits.col.credits')}</th>
+                      <th scope="col" className="px-4 py-3 font-medium">{t('credits.col.state')}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-line">
@@ -78,27 +78,37 @@ export default function CreditsPage() {
   );
 }
 
+const AMOUNT = {
+  held: { key: 'credits.amount_held', className: 'text-muted' },
+  settled: { key: 'credits.amount_settled', className: 'text-ink' },
+  refunded: { key: 'credits.amount_refunded', className: 'text-muted line-through' },
+};
+
 function UsageRow({ row }) {
   const { t, lang } = useI18n();
   const kind = t(`credits.kind.${row.kind === 'regenerate' ? 'regenerate' : 'job'}`);
-  // A null title means the job row is gone (deleted) or the hold never got a job; neither has a page to open.
+  // `title` is null only for holds that never got a job; deleted jobs keep their title but have no page.
   const title = row.title ?? t('credits.untitled');
-  const linkable = row.jobId && row.title != null;
+  const amount = AMOUNT[row.state] ?? AMOUNT.held;
+  const credits = formatNumber(row.credits, lang);
   return (
     <tr data-testid="usage-row" data-job-id={row.jobId ?? ''} className="align-top">
-      <td className="hidden px-4 py-3 text-muted md:table-cell">{formatDateTime(row.createdAt, lang)}</td>
+      <td className="hidden whitespace-nowrap px-4 py-3 text-muted lg:table-cell">{formatDateTime(row.createdAt, lang)}</td>
       <td className="px-4 py-3">
-        {linkable ? (
+        {row.jobAvailable ? (
           <Link to={`/jobs/${row.jobId}`} className="text-ink transition-colors duration-150 [overflow-wrap:anywhere] hover:text-accent">{title}</Link>
         ) : (
           <span className={row.title == null ? 'text-muted' : 'text-ink [overflow-wrap:anywhere]'}>{title}</span>
         )}
-        <p className="mt-0.5 text-xs text-muted md:hidden">{kind} · {formatDateTime(row.createdAt, lang)}</p>
+        <p className="mt-0.5 text-xs text-muted lg:hidden"><span className="md:hidden">{kind} · </span>{formatDateTime(row.createdAt, lang)}</p>
       </td>
-      <td className="hidden px-4 py-3 text-muted md:table-cell">{kind}</td>
+      <td className="hidden whitespace-nowrap px-4 py-3 text-muted md:table-cell">{kind}</td>
       <td className="hidden px-4 py-3 text-right font-mono tabular lg:table-cell">{formatNumber(row.chars, lang)}</td>
-      <td className="px-4 py-3 text-right font-mono tabular">{formatNumber(row.credits, lang)}</td>
-      <td className="px-4 py-3">
+      <td data-testid="usage-amount" className={`whitespace-nowrap px-4 py-3 text-right font-mono tabular ${amount.className}`}>
+        <span aria-hidden>{credits}</span>
+        <span className="sr-only">{t(amount.key, { count: credits })}</span>
+      </td>
+      <td className="whitespace-nowrap px-4 py-3">
         <StatusChip tone={STATE_TONE[row.state] ?? 'neutral'}>{t(`credits.state.${STATE_TONE[row.state] ? row.state : 'held'}`)}</StatusChip>
       </td>
     </tr>

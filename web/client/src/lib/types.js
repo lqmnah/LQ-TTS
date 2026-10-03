@@ -10,7 +10,7 @@
 /** @typedef {{id:string, title:string, voiceId:string, voiceName:string, status:'queued'|'running'|'done'|'failed'|'canceled', chars:number, credits:number, audioSeconds:number|null, revision:number, createdAt:string, finishedAt:string|null}} JobSummary */
 /** `errorCode` is the engine reason of a failed job, null otherwise. @typedef {JobSummary & {progress:{done:number,total:number}, needsReview:number, settings:JobSettings, files:Record<string,string>, revisions:number[], errorCode:string|null}} JobDetail */
 /** @typedef {{idx:number, paragraphIdx:number, text:string, style:string|null, status:'pending'|'running'|'done'|'needs_review', score:number|null, durationS:number|null, startS:number|null, endS:number|null, audioUrl:string|null}} Sentence */
-/** `title` is null for holds not linked to a job. @typedef {{id:string, jobId:string|null, title:string|null, kind:'job'|'regenerate', chars:number, credits:number, state:'held'|'settled'|'refunded', createdAt:string}} UsageRow */
+/** `title` is null for holds not linked to a job; `jobAvailable` is false once the job is deleted. @typedef {{id:string, jobId:string|null, title:string|null, jobAvailable:boolean, kind:'job'|'regenerate', chars:number, credits:number, state:'held'|'settled'|'refunded', createdAt:string}} UsageRow */
 /** @typedef {{balance:number|null, topupUrl:string, usage:UsageRow[]}} Credits */
 
 export {};

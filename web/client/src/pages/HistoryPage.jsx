@@ -61,7 +61,7 @@ export default function HistoryPage() {
     body = <div className="flex flex-col gap-2">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-16" />)}</div>;
   } else if (items === null) {
     body = <Notice tone="danger" action={<Button size="sm" onClick={firstLoad}>{t('common.retry')}</Button>}>{errorText(t, error)}</Notice>;
-  } else if (!items.length) {
+  } else if (!items.length && !nextBefore) {
     body = (
       <EmptyState
         icon={ClockCounterClockwiseIcon}
@@ -73,23 +73,25 @@ export default function HistoryPage() {
   } else {
     body = (
       <>
-        <div className="overflow-hidden rounded-panel border border-line bg-surface">
-          <table className="w-full table-fixed text-left text-sm">
-            <thead className="border-b border-line text-xs text-muted">
-              <tr>
-                <th scope="col" className="px-4 py-3 font-medium">{t('history.col.voiceover')}</th>
-                <th scope="col" className="hidden w-36 px-4 py-3 font-medium md:table-cell">{t('history.col.status')}</th>
-                <th scope="col" className="hidden w-28 px-4 py-3 text-right font-medium lg:table-cell">{t('history.col.chars')}</th>
-                <th scope="col" className="hidden w-24 px-4 py-3 text-right font-medium lg:table-cell">{t('history.col.credits')}</th>
-                <th scope="col" className="hidden w-24 px-4 py-3 text-right font-medium md:table-cell">{t('history.col.duration')}</th>
-                <th scope="col" className="w-28 px-4 py-3 text-right font-medium lg:w-40"><span className="sr-only">{t('history.col.actions')}</span></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-line">
-              {items.map((j) => <HistoryRow key={j.id} job={j} onDeleted={() => remove(j.id)} />)}
-            </tbody>
-          </table>
-        </div>
+        {items.length ? (
+          <div className="overflow-hidden rounded-panel border border-line bg-surface">
+            <table className="w-full text-left text-sm">
+              <thead className="border-b border-line text-xs text-muted">
+                <tr>
+                  <th scope="col" className="w-full px-4 py-3 font-medium">{t('history.col.voiceover')}</th>
+                  <th scope="col" className="hidden whitespace-nowrap px-4 py-3 font-medium md:table-cell">{t('history.col.status')}</th>
+                  <th scope="col" className="hidden whitespace-nowrap px-4 py-3 text-right font-medium lg:table-cell">{t('history.col.chars')}</th>
+                  <th scope="col" className="hidden whitespace-nowrap px-4 py-3 text-right font-medium lg:table-cell">{t('history.col.credits')}</th>
+                  <th scope="col" className="hidden whitespace-nowrap px-4 py-3 text-right font-medium md:table-cell">{t('history.col.duration')}</th>
+                  <th scope="col" className="px-4 py-3 text-right font-medium"><span className="sr-only">{t('history.col.actions')}</span></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-line">
+                {items.map((j) => <HistoryRow key={j.id} job={j} onDeleted={() => remove(j.id)} />)}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
         {error ? <Notice tone="danger">{errorText(t, error)}</Notice> : null}
         {nextBefore ? (
           <Button className="self-center" loading={loadingMore} onClick={more}>{t('common.load_more')}</Button>
@@ -152,34 +154,35 @@ function HistoryRow({ job, onDeleted }) {
     }
   }
 
+  const confirmId = `job-delete-confirm-${job.id}`;
   return (
     <tr data-testid="history-row" data-job-id={job.id} className="align-top">
       <td className="px-4 py-3">
         <Link to={`/jobs/${job.id}`} className="font-medium text-ink transition-colors duration-150 [overflow-wrap:anywhere] hover:text-accent">{job.title}</Link>
         <p className="mt-0.5 text-xs text-muted">{job.voiceName ?? t('history.voice_deleted')} · {formatDateTime(job.createdAt, lang)}</p>
         <div className="mt-1 md:hidden"><JobStatus status={job.status} /></div>
-        {confirming ? <p id={promptId} role="alert" className="mt-2 text-sm text-ink">{t('job.delete_confirm')}</p> : null}
         {error ? <p className="mt-1 text-xs text-danger" role="alert">{errorText(t, error)}</p> : null}
-      </td>
-      <td className="hidden px-4 py-3 md:table-cell"><JobStatus status={job.status} /></td>
-      <td className="hidden px-4 py-3 text-right font-mono tabular lg:table-cell">{formatNumber(job.chars, lang)}</td>
-      <td className="hidden px-4 py-3 text-right font-mono tabular lg:table-cell">{formatNumber(job.credits, lang)}</td>
-      <td className="hidden px-4 py-3 text-right font-mono tabular md:table-cell">{formatDuration(job.audioSeconds)}</td>
-      <td className="px-4 py-3">
-        <div className="flex flex-wrap justify-end gap-1">
-          {confirming ? (
-            <>
+        {/* The confirm lives in the widest cell, never the narrow actions cell, so it wraps instead of overlapping. */}
+        {confirming ? (
+          <div id={confirmId} data-testid="history-confirm" className="mt-3 flex flex-col gap-3 rounded-control bg-danger-soft p-3 lg:flex-row lg:items-center lg:justify-between">
+            <p id={promptId} role="alert" className="text-sm text-ink">{t('job.delete_confirm')}</p>
+            <div className="flex flex-wrap gap-2 lg:shrink-0">
               <Button ref={confirmRef} variant="danger" size="sm" loading={busy} aria-describedby={promptId} onClick={remove}>{t('job.delete')}</Button>
               <Button variant="ghost" size="sm" disabled={busy} onClick={() => setConfirming(false)}>{t('common.cancel')}</Button>
-            </>
-          ) : (
-            <>
-              <Button variant="ghost" size="sm" icon={DownloadSimpleIcon} disabled={job.status !== 'done'} loading={downloading} onClick={download} aria-label={t('history.download_named', { title: job.title })}>
-                <span className="hidden lg:inline">{t('common.download')}</span>
-              </Button>
-              <Button ref={triggerRef} variant="ghost" size="sm" icon={TrashIcon} onClick={() => setConfirming(true)} aria-label={t('history.delete_named', { title: job.title })} />
-            </>
-          )}
+            </div>
+          </div>
+        ) : null}
+      </td>
+      <td className="hidden whitespace-nowrap px-4 py-3 md:table-cell"><JobStatus status={job.status} /></td>
+      <td className="hidden whitespace-nowrap px-4 py-3 text-right font-mono tabular lg:table-cell">{formatNumber(job.chars, lang)}</td>
+      <td className="hidden whitespace-nowrap px-4 py-3 text-right font-mono tabular lg:table-cell">{formatNumber(job.credits, lang)}</td>
+      <td className="hidden whitespace-nowrap px-4 py-3 text-right font-mono tabular md:table-cell">{formatDuration(job.audioSeconds)}</td>
+      <td className="px-4 py-3">
+        <div className="flex justify-end gap-1">
+          <Button variant="ghost" size="sm" icon={DownloadSimpleIcon} disabled={job.status !== 'done' || confirming} loading={downloading} onClick={download} aria-label={t('history.download_named', { title: job.title })}>
+            <span className="hidden lg:inline">{t('common.download')}</span>
+          </Button>
+          <Button ref={triggerRef} variant="ghost" size="sm" icon={TrashIcon} aria-expanded={confirming} aria-controls={confirming ? confirmId : undefined} onClick={() => setConfirming(true)} aria-label={t('history.delete_named', { title: job.title })} />
         </div>
       </td>
     </tr>

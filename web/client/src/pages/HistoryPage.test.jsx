@@ -39,17 +39,22 @@ describe('HistoryPage', () => {
     expect(screen.queryByRole('button', { name: 'Muat lagi' })).not.toBeInTheDocument();
   });
 
-  it('confirms inline before deleting, moving focus into and out of the prompt', async () => {
+  it('confirms in a full-width row under the item, moving focus into and out of the prompt', async () => {
     api.jobs.mockResolvedValue({ items: [summary('a')], nextBefore: null });
     const user = userEvent.setup();
     renderRoutes(routes, { path: '/history' });
     const row = await screen.findByTestId('history-row');
-    const trigger = within(row).getByRole('button', { name: 'Hapus Naskah a' });
-    await user.click(trigger);
-    expect(within(row).getByRole('alert')).toHaveTextContent('tidak bisa dibatalkan');
-    expect(within(row).getByRole('button', { name: 'Hapus voiceover' })).toHaveFocus();
-    await user.click(within(row).getByRole('button', { name: 'Batal' }));
+    await user.click(within(row).getByRole('button', { name: 'Hapus Naskah a' }));
+    const confirm = screen.getByTestId('history-confirm');
+    // Layout guard: the prompt sits in the wide title cell, never the narrow actions cell it used to overflow.
+    const cells = row.querySelectorAll('td');
+    expect(cells[0]).toContainElement(confirm);
+    expect(cells[cells.length - 1]).not.toContainElement(confirm);
+    expect(within(confirm).getByRole('alert')).toHaveTextContent('tidak bisa dibatalkan');
+    expect(within(confirm).getByRole('button', { name: 'Hapus voiceover' })).toHaveFocus();
+    await user.click(within(confirm).getByRole('button', { name: 'Batal' }));
     expect(api.deleteJob).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('history-confirm')).not.toBeInTheDocument();
     expect(within(row).getByRole('button', { name: 'Hapus Naskah a' })).toHaveFocus();
   });
 
@@ -60,9 +65,26 @@ describe('HistoryPage', () => {
     renderRoutes(routes, { path: '/history' });
     const row = await screen.findByTestId('history-row');
     await user.click(within(row).getByRole('button', { name: 'Hapus Naskah a' }));
-    await user.click(within(row).getByRole('button', { name: 'Hapus voiceover' }));
+    await user.click(within(screen.getByTestId('history-confirm')).getByRole('button', { name: 'Hapus voiceover' }));
     expect(api.deleteJob).toHaveBeenCalledWith('a');
     expect(await screen.findByText('Belum ada voiceover')).toBeInTheDocument();
+  });
+
+  it('keeps paging instead of claiming emptiness when every loaded row was deleted', async () => {
+    api.jobs
+      .mockResolvedValueOnce({ items: [summary('a')], nextBefore: CURSOR })
+      .mockResolvedValueOnce({ items: [summary('b')], nextBefore: null });
+    api.deleteJob.mockResolvedValue(null);
+    const user = userEvent.setup();
+    renderRoutes(routes, { path: '/history' });
+    const row = await screen.findByTestId('history-row');
+    await user.click(within(row).getByRole('button', { name: 'Hapus Naskah a' }));
+    await user.click(within(screen.getByTestId('history-confirm')).getByRole('button', { name: 'Hapus voiceover' }));
+    expect(await screen.findByRole('button', { name: 'Muat lagi' })).toBeInTheDocument();
+    expect(screen.queryByText('Belum ada voiceover')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Muat lagi' }));
+    expect(api.jobs).toHaveBeenLastCalledWith({ limit: 20, before: CURSOR });
+    expect(await screen.findByRole('link', { name: 'Naskah b' })).toBeInTheDocument();
   });
 
   it('downloads the file URL the server lists for the job', async () => {
