@@ -12,12 +12,15 @@ export function buttonClass(variant = 'secondary', size = 'md', extra = '') {
   return [
     'inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-control font-medium',
     'transition-[background-color,border-color,color,filter,transform] duration-150 ease-out active:scale-[0.98]',
-    'disabled:cursor-not-allowed disabled:active:scale-100 pointer-coarse:min-h-11',
+    'disabled:cursor-not-allowed disabled:active:scale-100 pointer-coarse:min-h-11 pointer-coarse:min-w-11',
     SIZES[size],
     VARIANTS[variant],
     extra,
   ].join(' ');
 }
+
+/** Text links keep their desktop look; on touch screens they grow to a 44 px tall hit area (icon-only buttons get 44 px wide via buttonClass). */
+export const touchLinkClass = 'pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center';
 
 export function Button({ variant = 'secondary', size = 'md', loading = false, icon: Icon = null, className = '', children, disabled, type = 'button', ...rest }) {
   return (

@@ -51,8 +51,9 @@ export function targetConfig() {
   throw new Error(`unknown E2E_TARGET ${TARGET}`);
 }
 
-/** Login data: a fixed fake user locally, the seeded staging account otherwise. */
+/** Login data: a fixed fake user locally, the seeded staging account otherwise. PROD only runs the public smoke. */
 export function credentials() {
+  if (TARGET === 'prod') throw new Error('E2E_TARGET=prod runs the smoke project only; journey and screens never sign in on PROD');
   if (TARGET === 'local') {
     const u = LOCAL_USERS[0];
     return { identifier: u.username, password: u.password, code: () => u.totp };

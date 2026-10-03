@@ -3,7 +3,7 @@ import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router';
 import PlayButton from '../components/PlayButton.jsx';
 import { JobStatus, SentenceStatus } from '../components/status.jsx';
-import { Button, EmptyState, Field, Notice, Select, Skeleton, buttonClass, inputClass } from '../components/ui.jsx';
+import { Button, EmptyState, Field, Notice, Select, Skeleton, buttonClass, inputClass, touchLinkClass } from '../components/ui.jsx';
 import { useI18n } from '../i18n/index.jsx';
 import { api, openJobEvents, urls } from '../lib/api.js';
 import { errorText, jobFailureText } from '../lib/errors.js';
@@ -182,7 +182,7 @@ export default function JobPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <Link to="/" className="inline-flex w-fit items-center gap-2 text-sm text-muted transition-colors duration-150 hover:text-ink">
+      <Link to="/" className={`inline-flex w-fit items-center gap-2 text-sm text-muted transition-colors duration-150 hover:text-ink ${touchLinkClass}`}>
         <ArrowLeftIcon size={16} aria-hidden />
         {t('job.back')}
       </Link>

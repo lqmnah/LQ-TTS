@@ -47,10 +47,13 @@ const env = {
   CLIENT_DIST: fileURLToPath(new URL('../../client/dist', import.meta.url)),
 };
 
-const child = spawn(process.execPath, ['server/index.js'], { cwd: webDir, env, stdio: 'inherit' });
+// detached: Playwright signals the whole process group; the server must get exactly one SIGTERM (ours), since a
+// second one during shutdown forces exit 1 (shutdown_forced).
+const child = spawn(process.execPath, ['server/index.js'], { cwd: webDir, env, stdio: 'inherit', detached: true });
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => child.kill(signal));
 // The schema is throwaway: drop it again once the server is gone.
-child.on('exit', async (code) => {
+child.on('exit', async (code, signal) => {
+  process.stderr.write(`e2e server exited code=${code} signal=${signal}\n`);
   try {
     await purgeEngineVoices();
   } finally {

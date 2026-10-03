@@ -1,7 +1,7 @@
 import { ArrowLeftIcon, ArrowSquareOutIcon, WaveformIcon } from '@phosphor-icons/react';
 import { useEffect, useRef, useState } from 'react';
 import { Navigate, useNavigate, useSearchParams } from 'react-router';
-import { Button, Field, Notice, Segmented, Skeleton, buttonClass, inputClass } from '../components/ui.jsx';
+import { Button, Field, Notice, Segmented, Skeleton, buttonClass, inputClass, touchLinkClass } from '../components/ui.jsx';
 import { LANG_OPTIONS, hasKey, useI18n } from '../i18n/index.jsx';
 import { api } from '../lib/api.js';
 import { errorText } from '../lib/errors.js';
@@ -198,7 +198,7 @@ export default function LoginPage() {
             </Button>
             <p className="text-sm text-muted">
               {t('login.no_account')}{' '}
-              <a className="font-medium text-accent underline-offset-4 hover:underline" href={signupUrl} target="_blank" rel="noreferrer">
+              <a className={`font-medium text-accent underline-offset-4 hover:underline ${touchLinkClass}`} href={signupUrl} target="_blank" rel="noreferrer">
                 {t('login.signup')}
               </a>
             </p>

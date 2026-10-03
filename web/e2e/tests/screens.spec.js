@@ -5,7 +5,7 @@ import { anonymousProbe, expect, test } from './fixtures.js';
 
 const VIEWPORTS = [
   { name: '390', width: 390, height: 844, touch: true },
-  { name: '768', width: 768, height: 1024, touch: false },
+  { name: '768', width: 768, height: 1024, touch: true },
   { name: '1440', width: 1440, height: 900, touch: false },
 ];
 
@@ -77,7 +77,20 @@ for (const vp of VIEWPORTS) {
         await shot(page, vp, name);
       }
       await page.emulateMedia({ colorScheme: 'dark' });
-      // Cleanup: deleting the voice also deletes its voiceovers (engine rule), so it runs last.
+      // Delete the voiceover from its page with the inline confirm; the page then lands on History.
+      await page.goto(`/jobs/${jobId}`);
+      await expect(page.getByTestId('job-status')).toHaveAttribute('data-status', 'done');
+      await page.getByRole('button', { name: 'Hapus voiceover', exact: true }).click();
+      await expect(page.getByRole('alert').filter({ hasText: 'Hapus voiceover ini beserta semua revisinya?' })).toBeVisible();
+      const [jobDeleted] = await Promise.all([
+        page.waitForResponse((res) => res.request().method() === 'DELETE' && new URL(res.url()).pathname === `/api/jobs/${jobId}`),
+        page.getByRole('button', { name: 'Hapus voiceover', exact: true }).click(),
+      ]);
+      expect(jobDeleted.status()).toBe(204);
+      await expect(page).toHaveURL(/\/history$/);
+      await expect(page.locator(`[data-testid="history-row"][data-job-id="${jobId}"]`)).toHaveCount(0);
+
+      // Cleanup: the voice (the engine also drops any voiceover left on it).
       await page.goto('/voices');
       const row = page.getByTestId('voice-row').filter({ hasText: voiceName });
       await row.getByRole('button', { name: `Hapus suara ${voiceName}`, exact: true }).click();
@@ -87,6 +100,21 @@ for (const vp of VIEWPORTS) {
       ]);
       expect(deleted.status()).toBe(204);
       await expect(row).toHaveCount(0);
+
+      // Log out from the account menu: from the click on, the app probes /api/me anonymously again (401 expected).
+      let signedOut = false;
+      guard.expect((res) => signedOut && anonymousProbe(res));
+      await page.getByTestId('account-button').click();
+      signedOut = true;
+      const [loggedOut] = await Promise.all([
+        page.waitForResponse((res) => res.request().method() === 'POST' && new URL(res.url()).pathname === '/api/auth/logout'),
+        page.getByTestId('logout').click(),
+      ]);
+      expect(loggedOut.status()).toBe(204);
+      await expect(page).toHaveURL(/\/login(\?.*)?$/);
+      await expect(page.getByRole('heading', { level: 1, name: 'Masuk ke LQ TTS', exact: true })).toBeVisible();
+      await page.reload();
+      await expect(page).toHaveURL(/\/login(\?.*)?$/);
     }
     await context.close();
   });

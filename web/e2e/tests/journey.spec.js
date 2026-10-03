@@ -1,9 +1,9 @@
 import { statSync, truncateSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AUTH_FILE, SAMPLE_AUDIO, STATE_FILE, TARGET, credentials } from '../target.mjs';
-import { msUntilNextStep } from '../harness/totp.mjs';
+import { AUTH_FILE, SAMPLE_AUDIO, STATE_FILE, credentials } from '../target.mjs';
 import { anonymousProbe, expect, test } from './fixtures.js';
+import { enterTwoFactor } from './two-factor.js';
 
 const SCRIPT = [
   'Halo, ini uji suara dari LQ TTS untuk memastikan semuanya berjalan dengan baik.',
@@ -21,21 +21,6 @@ async function apiCall(page, method, path, body) {
     });
     return { status: res.status, json: res.status === 204 ? null : await res.json() };
   }, { method, path, body });
-}
-
-async function enterTwoFactor(page, creds, guard) {
-  const code = page.getByLabel('Kode', { exact: true });
-  await code.fill(creds.code());
-  await page.getByRole('button', { name: 'Verifikasi', exact: true }).click();
-  if (TARGET === 'local') return;
-  // LQ-Studio refuses a TOTP step it has already seen (replay protection). If a recent run used this window, wait for the next one.
-  const error = page.getByTestId('login-error');
-  if (await error.isVisible({ timeout: 3_000 }).catch(() => false)) {
-    guard.expect((res) => res.status() === 401 && res.url().endsWith('/api/auth/2fa'));
-    await page.waitForTimeout(msUntilNextStep() + 1_000);
-    await code.fill(creds.code());
-    await page.getByRole('button', { name: 'Verifikasi', exact: true }).click();
-  }
 }
 
 test('journey: login with 2FA, clone, generate, live progress, regenerate, download, ID and EN', async ({ page, guard }) => {
@@ -135,6 +120,16 @@ test('journey: login with 2FA, clone, generate, live progress, regenerate, downl
   const [download] = await Promise.all([page.waitForEvent('download'), page.getByTestId('download-mp3').click()]);
   expect(download.suggestedFilename()).toMatch(/\.mp3$/);
   expect(statSync(await download.path()).size).toBeGreaterThan(10_000);
+
+  // 7b. Switch back to revision 1 and fetch that revision's MP3
+  await page.getByTestId('revision-select').selectOption('1');
+  await expect(page.getByTestId('revision-select')).toHaveValue('1');
+  await expect(page.getByTestId('download-mp3')).toHaveAttribute('href', /[?&]revision=1(&|$)/);
+  const [download1] = await Promise.all([page.waitForEvent('download'), page.getByTestId('download-mp3').click()]);
+  expect(download1.url()).toMatch(/[?&]revision=1(&|$)/);
+  expect(download1.suggestedFilename()).toMatch(/\.mp3$/);
+  expect(statSync(await download1.path()).size).toBeGreaterThan(10_000);
+  await page.getByTestId('revision-select').selectOption('2');
 
   // 8. ID ⇄ EN, persisted on the server session
   await page.getByTestId('account-button').click();

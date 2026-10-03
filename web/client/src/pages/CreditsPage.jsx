@@ -1,6 +1,6 @@
 import { ArrowSquareOutIcon, CoinsIcon } from '@phosphor-icons/react';
 import { Link } from 'react-router';
-import { Button, EmptyState, Notice, PageHeader, Skeleton, StatusChip, buttonClass } from '../components/ui.jsx';
+import { Button, EmptyState, Notice, PageHeader, Skeleton, StatusChip, buttonClass, touchLinkClass } from '../components/ui.jsx';
 import { useI18n } from '../i18n/index.jsx';
 import { api } from '../lib/api.js';
 import { errorText } from '../lib/errors.js';
@@ -96,7 +96,7 @@ function UsageRow({ row }) {
       <td className="hidden whitespace-nowrap px-4 py-3 text-muted lg:table-cell">{formatDateTime(row.createdAt, lang)}</td>
       <td className="px-4 py-3">
         {row.jobAvailable ? (
-          <Link to={`/jobs/${row.jobId}`} className="text-ink transition-colors duration-150 [overflow-wrap:anywhere] hover:text-accent">{title}</Link>
+          <Link to={`/jobs/${row.jobId}`} className={`text-ink transition-colors duration-150 [overflow-wrap:anywhere] hover:text-accent ${touchLinkClass}`}>{title}</Link>
         ) : (
           <span className={row.title == null ? 'text-muted' : 'text-ink [overflow-wrap:anywhere]'}>{title}</span>
         )}
