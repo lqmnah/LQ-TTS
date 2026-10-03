@@ -85,7 +85,7 @@ const AMOUNT = {
 };
 
 function UsageRow({ row }) {
-  const { t, lang } = useI18n();
+  const { t, tn, lang } = useI18n();
   const kind = t(`credits.kind.${row.kind === 'regenerate' ? 'regenerate' : 'job'}`);
   // `title` is null only for holds that never got a job; deleted jobs keep their title but have no page.
   const title = row.title ?? t('credits.untitled');
@@ -106,7 +106,7 @@ function UsageRow({ row }) {
       <td className="hidden px-4 py-3 text-right font-mono tabular lg:table-cell">{formatNumber(row.chars, lang)}</td>
       <td data-testid="usage-amount" className={`whitespace-nowrap px-4 py-3 text-right font-mono tabular ${amount.className}`}>
         <span aria-hidden>{credits}</span>
-        <span className="sr-only">{t(amount.key, { count: credits })}</span>
+        <span className="sr-only">{tn(amount.key, row.credits, { count: credits })}</span>
       </td>
       <td className="whitespace-nowrap px-4 py-3">
         <StatusChip tone={STATE_TONE[row.state] ?? 'neutral'}>{t(`credits.state.${STATE_TONE[row.state] ? row.state : 'held'}`)}</StatusChip>

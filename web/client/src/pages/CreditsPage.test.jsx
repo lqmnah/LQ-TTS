@@ -80,4 +80,21 @@ describe('CreditsPage', () => {
     expect(screen.getByText('Belum ada pemakaian')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Buat voiceover pertama' })).toHaveAttribute('href', '/');
   });
+
+  it('pluralizes the spoken amount (1 credit vs 2 credits)', async () => {
+    api.credits.mockResolvedValue({
+      balance: 10,
+      topupUrl: 'https://lq-studio.com/upgrade-plan',
+      usage: [
+        { id: 'one', jobId: 'j1', title: 'A', jobAvailable: true, kind: 'job', chars: 10, credits: 1, state: 'settled', createdAt: '2026-10-03T08:00:00Z' },
+        { id: 'two', jobId: 'j1', title: 'A', jobAvailable: true, kind: 'job', chars: 10, credits: 2, state: 'refunded', createdAt: '2026-10-03T08:00:00Z' },
+      ],
+    });
+    renderRoutes(routes, { path: '/credits', lang: 'en' });
+    await screen.findAllByTestId('usage-row');
+    const [one, two] = screen.getAllByTestId('usage-amount');
+    expect(one).toHaveTextContent('1 credit charged');
+    expect(one).not.toHaveTextContent('credits');
+    expect(two).toHaveTextContent('2 credits refunded');
+  });
 });
