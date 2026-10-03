@@ -91,7 +91,11 @@ export default function TtsPage() {
       return params;
     }, { replace: true });
   }, [requested, requestedUsable, settled, draft.voiceId, setSearchParams]);
-  const voiceId = pickVoice({ requested, saved: draft.voiceId, mine, profiles: library });
+  // Nothing is picked (so Generate stays off) until the picker can show the choice: both lists answered and my own
+  // voices loaded. A failed profiles fetch alone still leaves my own voices usable.
+  const voiceId = settled && voices.data !== undefined
+    ? pickVoice({ requested, saved: draft.voiceId, mine, profiles: library })
+    : '';
   const fresh = estimate !== null && estimate.forText === trimmed;
   const credits = fresh ? estimate.credits : creditsFor(chars);
   const balance = fresh && estimate.balance != null ? estimate.balance : (me.balance ?? null);
@@ -155,7 +159,7 @@ export default function TtsPage() {
         </section>
 
         <aside className="flex flex-col gap-6 lg:sticky lg:top-20">
-          <VoicePicker voices={voices} settled={settled} mine={mine} library={library} value={voiceId} onChange={(id) => update({ voiceId: id })} />
+          <VoicePicker voices={voices} profiles={profiles} settled={settled} mine={mine} library={library} value={voiceId} onChange={(id) => update({ voiceId: id })} />
           <SettingsPanel settings={draft.settings} onSet={setSetting} onReset={() => update({ settings: normalizeSettings(DEFAULT_SETTINGS) })} noFormats={noFormats} />
           <section className="flex flex-col gap-3">
             <div className="text-sm" aria-live="polite" aria-atomic="true">
@@ -187,11 +191,14 @@ export default function TtsPage() {
   );
 }
 
-function VoicePicker({ voices, settled, mine, library, value, onChange }) {
+function VoicePicker({ voices, profiles, settled, mine, library, value, onChange }) {
   const { t } = useI18n();
   if (!settled) return <Skeleton className="h-[72px]" />;
   if (voices.data === undefined) {
     return <Notice tone="danger" action={<Button size="sm" onClick={voices.reload}>{t('common.retry')}</Button>}>{errorText(t, voices.error)}</Notice>;
+  }
+  if (!mine.length && profiles.data === undefined) {
+    return <Notice tone="danger" action={<Button size="sm" onClick={profiles.reload}>{t('common.retry')}</Button>}>{t('tts.profiles_error')}</Notice>;
   }
   if (!mine.length && !library.length) {
     return (

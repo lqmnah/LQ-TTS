@@ -260,4 +260,42 @@ describe('TtsPage', () => {
       expect(JSON.parse(window.localStorage.getItem('lqtts_draft:u1')).voiceId).toBe('p1');
     },
   );
+  it('keeps Generate off while the VO Profiles are still loading', async () => {
+    window.localStorage.setItem('lqtts_draft:u1', JSON.stringify({ text: 'Halo semua.', voiceId: '', settings: {} }));
+    let finish;
+    api.voiceProfiles.mockImplementation(() => new Promise((resolve) => { finish = () => resolve([profile()]); }));
+    renderRoutes(routes, { path: '/?voice=p1' });
+    await waitFor(() => expect(api.voices).toHaveBeenCalled());
+    await act(async () => {});
+    expect(screen.queryByTestId('voice-select')).not.toBeInTheDocument();
+    expect(screen.getByTestId('generate')).toBeDisabled();
+    await act(async () => finish());
+    await waitFor(() => expect(screen.getByTestId('voice-select')).toHaveValue('p1'));
+    expect(screen.getByTestId('generate')).toBeEnabled();
+  });
+  it('keeps Generate off while my voices failed to load', async () => {
+    window.localStorage.setItem('lqtts_draft:u1', JSON.stringify({ text: 'Halo semua.', voiceId: '', settings: {} }));
+    api.voices.mockRejectedValue(new ApiError(500, 'internal', ''));
+    api.voiceProfiles.mockResolvedValue([profile()]);
+    renderRoutes(routes);
+    expect(await screen.findByRole('button', { name: 'Coba lagi' })).toBeInTheDocument();
+    expect(screen.getByTestId('generate')).toBeDisabled();
+  });
+  it('offers a retry for the VO Profiles when they failed and I have no ready voice', async () => {
+    api.voices.mockResolvedValue([]);
+    api.voiceProfiles.mockRejectedValueOnce(new ApiError(500, 'internal', '')).mockResolvedValue([profile()]);
+    const user = userEvent.setup();
+    renderRoutes(routes);
+    expect(await screen.findByText('Daftar VO Profile gagal dimuat. Coba lagi.')).toBeInTheDocument();
+    expect(screen.queryByText('Kloning suara dulu')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Coba lagi' }));
+    expect(await screen.findByRole('option', { name: 'Pandji VO' })).toBeInTheDocument();
+    expect(api.voiceProfiles).toHaveBeenCalledTimes(2);
+  });
+  it('keeps my own voices usable when only the VO Profiles failed', async () => {
+    api.voiceProfiles.mockRejectedValue(new ApiError(500, 'internal', ''));
+    renderRoutes(routes);
+    await waitFor(() => expect(screen.getByTestId('voice-select')).toHaveValue('v1'));
+    expect(screen.queryByText('Daftar VO Profile gagal dimuat. Coba lagi.')).not.toBeInTheDocument();
+  });
 });
