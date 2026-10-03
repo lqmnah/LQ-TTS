@@ -233,7 +233,7 @@ export default function JobPage() {
         ) : null}
         {justFinished && status === 'done' ? <Notice tone="success" testId="job-finished">{t('job.done_notice')}</Notice> : null}
         {status === 'failed' || status === 'canceled' ? (
-          <Notice tone={status === 'canceled' ? 'info' : 'danger'}>{jobFailureText(t, status, progress.errorCode)}</Notice>
+          <Notice tone={status === 'canceled' ? 'info' : 'danger'}>{jobFailureText(t, status, progress.errorCode, progress.revision)}</Notice>
         ) : null}
         {needsReview > 0 ? <Notice tone="warning">{tn('job.needs_review', needsReview, { count: formatNumber(needsReview, lang) })}</Notice> : null}
         {actionError ? (

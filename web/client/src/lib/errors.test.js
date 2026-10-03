@@ -27,6 +27,13 @@ describe('voice and job failure texts', () => {
   it('explains failed and canceled jobs with the refund', () => {
     expect(jobFailureText(t, 'failed', 'worker_crashed')).toMatch(/refunded/);
     expect(jobFailureText(t, 'canceled', null)).toBe('The job was canceled. Your credits were refunded.');
+    expect(jobFailureText(t, 'failed', 'synthesis_failed', 3)).toBe(
+      'This change failed. Only its credits were refunded; revision 2 is still available below.',
+    );
+    expect(jobFailureText(t, 'canceled', null, 2)).toBe(
+      'This change was canceled. Only its credits were refunded; revision 1 is still available below.',
+    );
+    expect(jobFailureText(t, 'failed', null, 1)).toMatch(/^The job failed/);
     expect(jobFailureText(t, 'failed', null)).toBe('The job failed. Your credits were refunded.');
   });
 });

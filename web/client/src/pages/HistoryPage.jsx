@@ -13,6 +13,8 @@ import { formatNumber } from '../lib/pricing.js';
 const PAGE_SIZE = 20;
 const AUDIO_FILES = ['final.mp3', 'final.wav'];
 
+/** Done jobs, and failed/canceled regenerates whose earlier revision is still on disk, have audio. */
+const hasAudio = (job) => job.status === 'done' || ((job.status === 'failed' || job.status === 'canceled') && job.revision > 1);
 /** The server's file URLs point at the newest revision on disk via `?revision=N`. */
 const revisionOf = (url) => {
   const match = /[?&]revision=(\d+)/.exec(url ?? '');
@@ -179,7 +181,7 @@ function HistoryRow({ job, onDeleted }) {
       <td className="hidden whitespace-nowrap px-4 py-3 text-right font-mono tabular md:table-cell">{formatDuration(job.audioSeconds)}</td>
       <td className="px-4 py-3">
         <div className="flex justify-end gap-1">
-          <Button variant="ghost" size="sm" icon={DownloadSimpleIcon} disabled={job.status !== 'done' || confirming} loading={downloading} onClick={download} aria-label={t('history.download_named', { title: job.title })}>
+          <Button variant="ghost" size="sm" icon={DownloadSimpleIcon} disabled={!hasAudio(job) || confirming} loading={downloading} onClick={download} aria-label={t('history.download_named', { title: job.title })}>
             <span className="hidden lg:inline">{t('common.download')}</span>
           </Button>
           <Button ref={triggerRef} variant="ghost" size="sm" icon={TrashIcon} aria-expanded={confirming} aria-controls={confirming ? confirmId : undefined} onClick={() => setConfirming(true)} aria-label={t('history.delete_named', { title: job.title })} />

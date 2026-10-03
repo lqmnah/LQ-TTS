@@ -100,6 +100,26 @@ describe('HistoryPage', () => {
     expect(triggerDownload).toHaveBeenCalledWith('/api/jobs/a1234567xyz/files/final.mp3?revision=2', 'lq-tts-a1234567-r2.mp3');
   });
 
+  it('offers download only for jobs that have audio from some revision', async () => {
+    api.jobs.mockResolvedValue({
+      items: [
+        summary('done1'),
+        summary('fail1', { status: 'failed' }),
+        summary('fail2', { status: 'failed', revision: 2 }),
+        summary('canc2', { status: 'canceled', revision: 2 }),
+        summary('run2', { status: 'running', revision: 2 }),
+      ],
+      nextBefore: null,
+    });
+    renderRoutes(routes, { path: '/history' });
+    await screen.findAllByTestId('history-row');
+    const btn = (id) => screen.getByRole('button', { name: `Unduh Naskah ${id}` });
+    expect(btn('done1')).toBeEnabled();
+    expect(btn('fail1')).toBeDisabled();
+    expect(btn('fail2')).toBeEnabled();
+    expect(btn('canc2')).toBeEnabled();
+    expect(btn('run2')).toBeDisabled();
+  });
   it('teaches the first action when empty', async () => {
     api.jobs.mockResolvedValue({ items: [], nextBefore: null });
     renderRoutes(routes, { path: '/history' });

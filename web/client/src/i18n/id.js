@@ -138,6 +138,8 @@ export default {
   'job.failed.internal_error': 'Terjadi kesalahan di mesin suara. Kredit sudah dikembalikan.',
   'job.failed.canceled': 'Proses dibatalkan. Kredit sudah dikembalikan.',
   'job.failed.unknown': 'Proses gagal. Kredit sudah dikembalikan.',
+  'job.failed.change_failed': 'Perubahan ini gagal. Hanya kredit perubahan ini yang dikembalikan; revisi {n} masih tersedia di bawah.',
+  'job.failed.change_canceled': 'Perubahan ini dibatalkan. Hanya kredit perubahan ini yang dikembalikan; revisi {n} masih tersedia di bawah.',
   'job.sentence.style_label': 'Gaya: {style}',
   'job.sentence.score': 'Akurasi {score}%',
   'job.sentence.play': 'Putar kalimat {n}',

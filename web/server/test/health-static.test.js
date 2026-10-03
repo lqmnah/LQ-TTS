@@ -63,6 +63,13 @@ describe('client hosting', () => {
     expect((await request(h.app).get('/assets/missing.js')).status).toBe(404);
   });
 
+  it('denies framing on the page, the API and SPA routes', async () => {
+    for (const url of ['/', '/api/health', '/voices/123']) {
+      const res = await request(h.app).get(url);
+      expect(res.headers['content-security-policy'], url).toBe("frame-ancestors 'none'");
+      expect(res.headers['x-frame-options'], url).toBe('DENY');
+    }
+  });
   it('falls back to index.html for app routes but never for /api', async () => {
     const page = await request(h.app).get('/voices/123');
     expect(page.status).toBe(200);

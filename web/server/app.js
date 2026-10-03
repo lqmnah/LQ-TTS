@@ -15,6 +15,12 @@ import { voicesRouter } from './routes/voices.js';
 export function createApp(ctx, { healthCacheMs = 10000, sseKeepaliveMs = 15000 } = {}) {
   const app = express();
   app.disable('x-powered-by');
+  // Deny framing only; no other CSP directives, so Cloudflare's injected analytics beacon keeps working.
+  app.use((req, res, next) => {
+    res.set('Content-Security-Policy', "frame-ancestors 'none'");
+    res.set('X-Frame-Options', 'DENY');
+    next();
+  });
   app.use('/api', callbackRouter(ctx));
   app.use('/api', express.json({ limit: '256kb' }));
   app.use('/api', csrf);

@@ -24,7 +24,7 @@ const DYNAMIC_FAMILIES = {
   plan: ['free', 'pro', 'ultra', 'sultan'],
   error: [...C2_ERROR_CODES, 'network', 'generic', 'rate_limited_later'],
   'job.status': ['queued', 'running', 'done', 'failed', 'canceled'],
-  'job.failed': ['synthesis_failed', 'worker_crashed', 'internal_error', 'canceled', 'unknown'],
+  'job.failed': ['synthesis_failed', 'worker_crashed', 'internal_error', 'canceled', 'unknown', 'change_failed', 'change_canceled'],
   'job.sentence.status': ['pending', 'running', 'done', 'needs_review'],
   'voices.status': ['processing', 'ready', 'failed'],
   'voices.language': ['auto', 'id', 'en'],

@@ -138,6 +138,8 @@ export default {
   'job.failed.internal_error': 'The voice engine hit an error. Your credits were refunded.',
   'job.failed.canceled': 'The job was canceled. Your credits were refunded.',
   'job.failed.unknown': 'The job failed. Your credits were refunded.',
+  'job.failed.change_failed': 'This change failed. Only its credits were refunded; revision {n} is still available below.',
+  'job.failed.change_canceled': 'This change was canceled. Only its credits were refunded; revision {n} is still available below.',
   'job.sentence.style_label': 'Style: {style}',
   'job.sentence.score': 'Accuracy {score}%',
   'job.sentence.play': 'Play sentence {n}',

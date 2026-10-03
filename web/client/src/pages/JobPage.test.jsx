@@ -92,6 +92,15 @@ describe('JobPage', () => {
     expect(openJobEvents).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps the earlier revision when a regenerate fails, refunding only that change', async () => {
+    api.job.mockResolvedValue(job({ status: 'failed', errorCode: 'synthesis_failed', revision: 2 }));
+    api.sentences.mockResolvedValue([sentence(0, 'done'), sentence(1, 'done')]);
+    renderRoutes(routes, { path: '/jobs/j1' });
+    expect(
+      await screen.findByText('Perubahan ini gagal. Hanya kredit perubahan ini yang dikembalikan; revisi 1 masih tersedia di bawah.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Kredit sudah dikembalikan/)).not.toBeInTheDocument();
+  });
   it('explains a failed job and the refund', async () => {
     api.job.mockResolvedValue(job({ status: 'failed', errorCode: 'synthesis_failed' }));
     api.sentences.mockResolvedValue([sentence(0, 'done'), sentence(1, 'pending')]);
