@@ -5,8 +5,9 @@ import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { USAGE, runProfileAdd } from '../cli/profile-add.js';
+import { POLL_MS, USAGE, runProfileAdd } from '../cli/profile-add.js';
 import { validateProfileMeta } from '../cli/profile-meta.js';
+import { UpstreamError, UpstreamUnavailable } from '../clients/http.js';
 import { testDatabaseUrl } from './db-url.js';
 import { CALLBACK_SECRET, ENGINE_TOKEN, LQ_TOKEN, startHarness } from './helpers.js';
 
@@ -130,7 +131,8 @@ describe('profile-add CLI', () => {
     const { id: oldId } = await run(['--meta', meta, '--filename', 'a.wav']);
     const seenWhileProcessing = [];
     const second = await run(['--meta', meta, '--filename', 'b.wav'], {
-      sleep: async () => {
+      sleep: async (ms) => {
+        if (ms !== POLL_MS) return;
         seenWhileProcessing.push((await h.ctx.profiles.bySlug('replace-order')).voice_id, h.engine.state.voices.has(oldId));
         await finishAs('ready')();
       },
@@ -161,6 +163,69 @@ describe('profile-add CLI', () => {
     expect(second.lines.at(-1)).toBe(`previous voice ${oldId} kept, used by jobs`);
     expect(h.engine.state.voices.has(oldId)).toBe(true);
     expect((await h.ctx.profiles.bySlug('still-used')).voice_id).toBe(second.id);
+  });
+
+  it('waits the grace window after the switch, so a job created on the old voice meanwhile keeps it', async () => {
+    const meta = writeMeta({ slug: 'grace' });
+    const { id: oldId } = await run(['--meta', meta, '--filename', 'a.wav']);
+    const graces = [];
+    const second = await run(['--meta', meta, '--filename', 'b.wav'], {
+      sleep: async (ms) => {
+        if (ms === POLL_MS) return finishAs('ready')();
+        graces.push(ms);
+        // A job create that passed its voice check on the old voice before the switch lands now.
+        expect((await h.ctx.profiles.bySlug('grace')).voice_id).not.toBe(oldId);
+        await h.pool.query(
+          `INSERT INTO jobs (id, user_id, voice_id, voice_name, title, chars, status) VALUES ($1, 'ana', $2, 'Pandji', 't', 1, 'queued')`,
+          [crypto.randomUUID(), oldId],
+        );
+      },
+    });
+    expect(graces).toEqual([60_000]);
+    expect(second.code).toBe(0);
+    expect(second.lines.at(-1)).toBe(`previous voice ${oldId} kept, used by jobs`);
+    expect(h.engine.state.voices.has(oldId)).toBe(true);
+  });
+
+  it('takes the grace window from --grace-seconds and refuses a bad value', async () => {
+    const meta = writeMeta({ slug: 'grace-flag' });
+    const { id: oldId } = await run(['--meta', meta, '--filename', 'a.wav']);
+    const graces = [];
+    const second = await run(['--meta', meta, '--filename', 'b.wav', '--grace-seconds', '7'], {
+      sleep: async (ms) => (ms === POLL_MS ? finishAs('ready')() : graces.push(ms)),
+    });
+    expect(graces).toEqual([7000]);
+    expect(second.lines.at(-1)).toBe(`previous voice ${oldId} deleted`);
+    const before = uploads();
+    for (const argv of [
+      ['--meta', meta, '--filename', 'b.wav', '--grace-seconds=-1'],
+      ['--meta', meta, '--filename', 'b.wav', '--grace-seconds', 'soon'],
+      ['--list', '--grace-seconds', '5'],
+    ]) {
+      const bad = await run(argv);
+      expect(bad.code).toBe(1);
+      expect(bad.errors[0]).toMatch(/^error: (--grace-seconds must be a whole number of seconds|usage: profile-add\.js)/);
+    }
+    expect(uploads()).toBe(before);
+  });
+
+  it('says so when a discarded voice cannot be deleted', async () => {
+    const stuck = {
+      ...h.ctx.engine,
+      deleteVoice: async () => { throw new UpstreamError('engine', 500, 'internal_error', 'boom'); },
+    };
+    const failed = await run(['--meta', writeMeta({ slug: 'stuck' }), '--filename', 'a.wav'], {
+      engine: stuck, sleep: finishAs('failed', 'no_clean_speech'),
+    });
+    expect(failed.code).toBe(1);
+    expect(failed.lines).toEqual([
+      `voice ${failed.id} processing`, `voice ${failed.id} not deleted: internal_error`, `voice ${failed.id} failed no_clean_speech`,
+    ]);
+    const down = { ...h.ctx.engine, deleteVoice: async () => { throw new UpstreamUnavailable('engine', null, 503); } };
+    const slow = await run(['--meta', writeMeta({ slug: 'stuck-down' }), '--filename', 'a.wav'], {
+      engine: down, sleep: finishAs('failed', 'no_clean_speech'),
+    });
+    expect(slow.lines).toContain(`voice ${slow.id} not deleted: engine_unavailable`);
   });
 
   it('exits 1 on a failed voice, deletes it, and leaves an existing profile on its old voice', async () => {
@@ -215,6 +280,22 @@ describe('profile-add CLI', () => {
     expect(res.code).toBe(0);
     expect(res.lines[0]).toMatch(/^profiles \d+$/);
     expect(res.lines).toContain(`profile listed voice ${id} ready`);
+  });
+
+  it('lists active profiles whose engine voice is missing or not a library voice', async () => {
+    const missingId = crypto.randomUUID();
+    await h.ctx.profiles.upsert(validateProfileMeta({ ...BASE, slug: 'list-missing' }), missingId);
+    const own = await h.ctx.engine.uploadVoice({
+      fields: { name: 'Mine', owner_ref: 'ana', language: 'id' }, filename: 'm.wav', mimeType: 'audio/wav', file: Readable.from([AUDIO]),
+    });
+    await h.ctx.profiles.upsert(validateProfileMeta({ ...BASE, slug: 'list-foreign' }), own.id);
+    const res = await run(['--list']);
+    expect(res.code).toBe(0);
+    expect(res.lines).toContain(`profile list-missing voice ${missingId} missing`);
+    expect(res.lines).toContain(`profile list-foreign voice ${own.id} not library`);
+    expect(res.lines[0]).toBe(`profiles ${res.lines.length - 1}`);
+    await run(['--deactivate', 'list-missing']);
+    await run(['--deactivate', 'list-foreign']);
   });
 
   it('redacts secrets from error text', async () => {
