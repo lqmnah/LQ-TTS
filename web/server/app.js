@@ -2,6 +2,7 @@ import express from 'express';
 import { csrf, requireAuth } from './http/middleware.js';
 import { ApiError, errorHandler } from './lib/errors.js';
 import { authRouter } from './routes/auth.js';
+import { callbackRouter } from './routes/callback.js';
 import { creditsRouter } from './routes/credits.js';
 import { eventsRouter } from './routes/events.js';
 import { healthRouter } from './routes/health.js';
@@ -14,6 +15,7 @@ import { voicesRouter } from './routes/voices.js';
 export function createApp(ctx, { healthCacheMs = 10000, sseKeepaliveMs = 15000 } = {}) {
   const app = express();
   app.disable('x-powered-by');
+  app.use('/api', callbackRouter(ctx));
   app.use('/api', express.json({ limit: '256kb' }));
   app.use('/api', csrf);
   app.use('/api', healthRouter(ctx, { cacheMs: healthCacheMs }));
