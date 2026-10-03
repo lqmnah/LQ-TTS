@@ -4,6 +4,9 @@
 // to stdout, which the caller pipes into a mode-600 file on mac-studio. Refuses to run anywhere but staging.
 import { randomBytes, randomUUID } from 'node:crypto';
 
+// stdout is the env file: LQ-Studio modules log their startup lines with console.log, so send those to stderr.
+console.log = (...args) => console.error(...args);
+
 if (!/^https:\/\/demo\.lq-studio\.com\/?$/.test(process.env.PUBLIC_URL ?? '')) {
   console.error('refusing: PUBLIC_URL is not LQ-Studio staging');
   process.exit(2);
