@@ -5,6 +5,7 @@ let current = null;
 /** Plays `src`; starting one clip pauses whichever clip played before. */
 export function useAudioToggle(src) {
   const [playing, setPlaying] = useState(false);
+  const [error, setError] = useState(false);
   const audioRef = useRef(null);
 
   useEffect(() => () => {
@@ -17,6 +18,7 @@ export function useAudioToggle(src) {
       audioRef.current.pause();
       audioRef.current = null;
       setPlaying(false);
+      setError(false);
     }
   }, [src]);
 
@@ -36,13 +38,19 @@ export function useAudioToggle(src) {
       audioRef.current = audio;
     }
     if (current && current !== audioRef.current) current.pause();
-    current = audioRef.current;
+    const audio = audioRef.current;
+    current = audio;
+    setError(false);
     try {
-      await audioRef.current.play();
+      await audio.play();
     } catch {
+      // Drop the failed element so the next click fetches the clip afresh.
+      if (audioRef.current === audio) audioRef.current = null;
+      if (current === audio) current = null;
       setPlaying(false);
+      setError(true);
     }
   }, [src, playing]);
 
-  return { playing, toggle };
+  return { playing, error, toggle };
 }

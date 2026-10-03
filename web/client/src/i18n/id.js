@@ -169,6 +169,7 @@ export default {
   'voices.language.en': 'Inggris',
   'voices.ref_seconds': 'Klip {seconds} dtk',
   'voices.preview': 'Dengarkan contoh {name}',
+  'voices.preview_failed': 'Contoh suara gagal diputar. Klik lagi untuk mencoba.',
   'voices.delete': 'Hapus',
   'voices.delete_named': 'Hapus suara {name}',
   'voices.delete_confirm': 'Hapus {name}? Semua voiceover yang memakai suara ini ikut terhapus.',

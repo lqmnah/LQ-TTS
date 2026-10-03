@@ -1,5 +1,5 @@
 import { PlusIcon, TrashIcon, UserSoundIcon } from '@phosphor-icons/react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import PlayButton from '../components/PlayButton.jsx';
 import { VoiceStatus } from '../components/status.jsx';
 import { Button, EmptyState, Field, Notice, PageHeader, Segmented, Skeleton, buttonClass, inputClass } from '../components/ui.jsx';
@@ -19,7 +19,9 @@ function languageLabel(t, code) {
 
 /** A 409 `voice_not_ready` from the upload means another upload of this user still holds the lease. */
 function cloneErrorText(t, err) {
-  return err?.code === 'voice_not_ready' ? t('voices.form.upload_busy') : errorText(t, err);
+  if (err?.code === 'voice_not_ready') return t('voices.form.upload_busy');
+  if (err?.code === 'too_large') return t('voices.form.audio_size');
+  return errorText(t, err);
 }
 
 export default function VoicesPage() {
@@ -29,7 +31,10 @@ export default function VoicesPage() {
   const voices = useResource(() => api.voices(), []);
   const [formOpen, setFormOpen] = useState(false);
   const [created, setCreated] = useState(false);
-  const { reload } = voices;
+  const [announcement, setAnnouncement] = useState('');
+  const cloneButtonRef = useRef(null);
+  const returnFocus = useRef(false);
+  const { reload, setData } = voices;
   const list = voices.data ?? [];
   const processing = list.some((v) => v.status === 'processing');
 
@@ -48,12 +53,34 @@ export default function VoicesPage() {
   const atLimit = loaded && used >= limit;
   const usedLabel = used === null ? '–' : formatNumber(used, lang);
 
-  function onCreated() {
+  // The clone button only exists while the form is closed; focus it once it is back.
+  useEffect(() => {
+    if (formOpen || !returnFocus.current) return;
+    returnFocus.current = false;
+    cloneButtonRef.current?.focus();
+  }, [formOpen]);
+
+  function closeForm() {
+    returnFocus.current = true;
     setFormOpen(false);
+  }
+
+  function onCreated() {
+    closeForm();
     setCreated(true);
     reload();
     session.refresh();
   }
+
+  // A 403 voice_limit_reached means our count was stale: refresh both; once the list shows the limit, its notice replaces the form.
+  function onLimitReached() {
+    reload();
+    session.refresh();
+  }
+
+  useEffect(() => {
+    if (atLimit) setFormOpen(false);
+  }, [atLimit]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -61,7 +88,7 @@ export default function VoicesPage() {
         title={t('voices.title')}
         subtitle={loaded || voices.error ? t('voices.usage', { count: usedLabel, limit: formatNumber(limit, lang) }) : null}
         actions={formOpen ? null : (
-          <Button variant="primary" icon={PlusIcon} disabled={!loaded || atLimit} onClick={() => { setFormOpen(true); setCreated(false); }}>
+          <Button ref={cloneButtonRef} variant="primary" icon={PlusIcon} disabled={!loaded || atLimit} onClick={() => { setFormOpen(true); setCreated(false); }}>
             {t('voices.clone')}
           </Button>
         )}
@@ -75,9 +102,17 @@ export default function VoicesPage() {
           {t('voices.limit', { limit: formatNumber(limit, lang) })}
         </Notice>
       ) : null}
-      {created ? <Notice tone="success">{t('voices.form.success')}</Notice> : null}
-      {formOpen ? <CloneVoiceForm onCancel={() => setFormOpen(false)} onCreated={onCreated} /> : null}
-      <VoiceList voices={voices} onDeleted={() => { reload(); session.refresh(); }} />
+      {created && processing ? <Notice tone="success">{t('voices.form.success')}</Notice> : null}
+      {formOpen ? <CloneVoiceForm onCancel={closeForm} onCreated={onCreated} onLimitReached={onLimitReached} onAnnounce={setAnnouncement} /> : null}
+      <p className="sr-only" aria-live="polite" data-testid="upload-live">{announcement}</p>
+      <VoiceList
+        voices={voices}
+        onDeleted={(id) => {
+          setData((items) => items?.filter((v) => v.id !== id));
+          reload();
+          session.refresh();
+        }}
+      />
     </div>
   );
 }
@@ -103,13 +138,23 @@ function VoiceRow({ voice, onDeleted }) {
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const triggerRef = useRef(null);
+  const confirmRef = useRef(null);
+  const wasConfirming = useRef(false);
+  const promptId = `voice-delete-${voice.id}`;
+
+  useEffect(() => {
+    if (confirming) confirmRef.current?.focus();
+    else if (wasConfirming.current) triggerRef.current?.focus();
+    wasConfirming.current = confirming;
+  }, [confirming]);
 
   async function remove() {
     setBusy(true);
     setError(null);
     try {
       await api.deleteVoice(voice.id);
-      onDeleted();
+      onDeleted(voice.id);
     } catch (err) {
       setError(err);
       setBusy(false);
@@ -135,12 +180,12 @@ function VoiceRow({ voice, onDeleted }) {
       <div className="flex flex-wrap items-center gap-2 md:shrink-0 md:justify-end">
         {confirming ? (
           <>
-            <span className="text-sm text-ink">{t('voices.delete_confirm', { name: voice.name })}</span>
-            <Button variant="danger" size="sm" loading={busy} onClick={remove}>{t('common.delete')}</Button>
+            <span id={promptId} role="alert" className="text-sm text-ink">{t('voices.delete_confirm', { name: voice.name })}</span>
+            <Button ref={confirmRef} variant="danger" size="sm" loading={busy} aria-describedby={promptId} onClick={remove}>{t('common.delete')}</Button>
             <Button variant="ghost" size="sm" disabled={busy} onClick={() => setConfirming(false)}>{t('common.cancel')}</Button>
           </>
         ) : (
-          <Button variant="ghost" size="sm" icon={TrashIcon} aria-label={t('voices.delete_named', { name: voice.name })} onClick={() => setConfirming(true)}>
+          <Button ref={triggerRef} variant="ghost" size="sm" icon={TrashIcon} aria-label={t('voices.delete_named', { name: voice.name })} onClick={() => setConfirming(true)}>
             {t('voices.delete')}
           </Button>
         )}
@@ -149,7 +194,7 @@ function VoiceRow({ voice, onDeleted }) {
   );
 }
 
-function CloneVoiceForm({ onCancel, onCreated }) {
+function CloneVoiceForm({ onCancel, onCreated, onLimitReached, onAnnounce }) {
   const { t, lang } = useI18n();
   const [file, setFile] = useState(null);
   const [name, setName] = useState('');
@@ -159,6 +204,32 @@ function CloneVoiceForm({ onCancel, onCreated }) {
   const [touched, setTouched] = useState({});
   const [progress, setProgress] = useState(null);
   const [error, setError] = useState(null);
+  const abortRef = useRef(null);
+  const headingRef = useRef(null);
+  const announcedStep = useRef(-1);
+
+  useEffect(() => {
+    headingRef.current?.focus();
+    return () => abortRef.current?.abort();
+  }, []);
+
+  // Announce start, every 25 % and completion, not every progress tick.
+  function onProgress(percent) {
+    setProgress(percent);
+    const step = Math.floor(percent / 25);
+    if (step > announcedStep.current) {
+      announcedStep.current = step;
+      onAnnounce(t('voices.form.uploading', { percent: step * 25 }));
+    }
+  }
+
+  function cancel() {
+    if (abortRef.current) {
+      abortRef.current.abort();
+      return;
+    }
+    onCancel();
+  }
 
   const fileProblem = audioFileProblem(file);
   const nameProblem = name.trim() ? null : 'voices.form.name_required';
@@ -177,19 +248,33 @@ function CloneVoiceForm({ onCancel, onCreated }) {
     setTouched({ file: true, name: true, consent: true });
     if (fileProblem || nameProblem || !consent) return;
     setError(null);
-    setProgress(0);
+    const controller = new AbortController();
+    abortRef.current = controller;
+    announcedStep.current = -1;
+    onProgress(0);
     try {
-      await createVoice({ file, name: name.trim(), language, transcript: transcript.trim(), consent }, { onProgress: setProgress });
+      await createVoice(
+        { file, name: name.trim(), language, transcript: transcript.trim(), consent },
+        { onProgress, signal: controller.signal },
+      );
+      abortRef.current = null;
       onCreated();
     } catch (err) {
-      setError(err);
+      abortRef.current = null;
       setProgress(null);
+      if (err?.name === 'AbortError') {
+        onAnnounce('');
+        return;
+      }
+      onAnnounce('');
+      setError(err);
+      if (err?.code === 'voice_limit_reached') onLimitReached();
     }
   }
 
   return (
     <form noValidate onSubmit={submit} data-testid="clone-form" className="flex flex-col gap-5 rounded-panel border border-line bg-surface p-5 md:p-6">
-      <h2 className="text-lg font-semibold text-ink">{t('voices.form.title')}</h2>
+      <h2 ref={headingRef} tabIndex={-1} className="text-lg font-semibold text-ink outline-none">{t('voices.form.title')}</h2>
       {error ? <Notice tone="danger">{cloneErrorText(t, error)}</Notice> : null}
       <Field id="voice-audio" label={t('voices.form.audio')} help={t('voices.form.audio_help')} error={fileError}>
         <input
@@ -252,7 +337,7 @@ function CloneVoiceForm({ onCancel, onCreated }) {
         <Button type="submit" variant="primary" loading={uploading}>
           {uploading ? t('voices.form.uploading', { percent: progress }) : t('voices.form.submit')}
         </Button>
-        <Button variant="ghost" disabled={uploading} onClick={onCancel}>{t('common.cancel')}</Button>
+        <Button variant="ghost" onClick={cancel}>{t('common.cancel')}</Button>
       </div>
       {uploading ? (
         <div role="progressbar" aria-label={t('voices.form.upload_progress')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress} className="h-1 overflow-hidden rounded-full bg-surface-2">

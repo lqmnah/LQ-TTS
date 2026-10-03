@@ -169,6 +169,7 @@ export default {
   'voices.language.en': 'English',
   'voices.ref_seconds': '{seconds} s clip',
   'voices.preview': 'Preview {name}',
+  'voices.preview_failed': 'The preview could not play. Click again to retry.',
   'voices.delete': 'Delete',
   'voices.delete_named': 'Delete voice {name}',
   'voices.delete_confirm': 'Delete {name}? Every voiceover made with this voice is deleted too.',

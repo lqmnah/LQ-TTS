@@ -20,7 +20,7 @@ beforeEach(() => {
 
 describe('VoicesPage', () => {
   it('requires consent before uploading', async () => {
-    api.voices.mockResolvedValue([]);
+    api.voices.mockResolvedValueOnce([]).mockResolvedValue([voice({ id: 'v9', status: 'processing', previewUrl: null })]);
     const user = userEvent.setup();
     renderRoutes(routes, { path: '/voices' });
     await user.click(await screen.findByRole('button', { name: 'Kloning suara' }));
@@ -133,5 +133,128 @@ describe('VoicesPage', () => {
     api.voices.mockRejectedValue(new ApiError(502, 'engine_unavailable', ''));
     renderRoutes(routes, { path: '/voices', me: { ...ME, voiceCount: null } });
     expect(await screen.findByText('– dari 3 suara terpakai')).toBeInTheDocument();
+  });
+
+  async function openFilledForm(user) {
+    await user.click(await screen.findByRole('button', { name: 'Kloning suara' }));
+    await user.upload(screen.getByLabelText('Rekaman'), new File(['RIFF'], 'a.wav', { type: 'audio/wav' }));
+    await user.type(screen.getByLabelText('Nama suara'), 'A');
+    await user.click(screen.getByRole('checkbox', { name: /Saya pemilik suara ini/ }));
+  }
+
+  it('cancels an in-flight upload quietly and announces progress in steps', async () => {
+    api.voices.mockResolvedValue([]);
+    let seen;
+    createVoice.mockImplementation((_fields, { onProgress, signal }) => new Promise((_resolve, reject) => {
+      seen = signal;
+      onProgress(10);
+      onProgress(52);
+      signal.addEventListener('abort', () => reject(new DOMException('Upload aborted', 'AbortError')));
+    }));
+    const user = userEvent.setup();
+    renderRoutes(routes, { path: '/voices' });
+    await openFilledForm(user);
+    await user.click(screen.getByRole('button', { name: 'Mulai kloning' }));
+    expect(await screen.findByTestId('upload-live')).toHaveTextContent('Mengunggah 50%');
+    await user.click(screen.getByRole('button', { name: 'Batal' }));
+    expect(seen.aborted).toBe(true);
+    expect(await screen.findByRole('button', { name: 'Mulai kloning' })).toBeEnabled();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
+  });
+
+  it('moves focus into the form and back to the clone button', async () => {
+    api.voices.mockResolvedValue([]);
+    const user = userEvent.setup();
+    renderRoutes(routes, { path: '/voices' });
+    await user.click(await screen.findByRole('button', { name: 'Kloning suara' }));
+    expect(screen.getByRole('heading', { name: 'Kloning suara baru' })).toHaveFocus();
+    await user.click(screen.getByRole('button', { name: 'Batal' }));
+    expect(screen.getByRole('button', { name: 'Kloning suara' })).toHaveFocus();
+  });
+
+  it('focuses the delete confirmation and returns focus on cancel', async () => {
+    api.voices.mockResolvedValue([voice()]);
+    const user = userEvent.setup();
+    renderRoutes(routes, { path: '/voices' });
+    const row = await screen.findByTestId('voice-row');
+    await user.click(within(row).getByRole('button', { name: 'Hapus suara Pandji' }));
+    const confirm = within(row).getByRole('button', { name: 'Hapus' });
+    expect(confirm).toHaveFocus();
+    expect(confirm).toHaveAccessibleDescription('Hapus Pandji? Semua voiceover yang memakai suara ini ikut terhapus.');
+    await user.click(within(row).getByRole('button', { name: 'Batal' }));
+    expect(within(row).getByRole('button', { name: 'Hapus suara Pandji' })).toHaveFocus();
+  });
+
+  it('drops a deleted row even while the reload is still pending', async () => {
+    api.voices.mockResolvedValueOnce([voice(), voice({ id: 'v2', name: 'Rara' })]).mockReturnValue(new Promise(() => {}));
+    api.deleteVoice.mockResolvedValue(null);
+    const user = userEvent.setup();
+    renderRoutes(routes, { path: '/voices' });
+    const [row] = await screen.findAllByTestId('voice-row');
+    await user.click(within(row).getByRole('button', { name: 'Hapus suara Pandji' }));
+    await user.click(within(row).getByRole('button', { name: 'Hapus' }));
+    expect(await screen.findAllByTestId('voice-row')).toHaveLength(1);
+    expect(screen.queryByText('Pandji')).not.toBeInTheDocument();
+  });
+
+  it('refreshes the list and session when the server says the limit is reached', async () => {
+    const full = [voice({ id: 'a' }), voice({ id: 'b' }), voice({ id: 'c' })];
+    api.voices.mockResolvedValueOnce([]).mockResolvedValue(full);
+    createVoice.mockRejectedValue(new ApiError(403, 'voice_limit_reached', ''));
+    const user = userEvent.setup();
+    renderRoutes(routes, { path: '/voices' });
+    await openFilledForm(user);
+    const meCalls = api.me.mock.calls.length;
+    await user.click(screen.getByRole('button', { name: 'Mulai kloning' }));
+    expect(await screen.findByTestId('voice-limit')).toBeInTheDocument();
+    expect(screen.queryByTestId('clone-form')).not.toBeInTheDocument();
+    expect(api.voices).toHaveBeenCalledTimes(2);
+    expect(api.me.mock.calls.length).toBeGreaterThan(meCalls);
+  });
+
+  it('explains a 413 with the 95 MB export hint', async () => {
+    api.voices.mockResolvedValue([]);
+    createVoice.mockRejectedValue(new ApiError(413, 'too_large', ''));
+    const user = userEvent.setup();
+    renderRoutes(routes, { path: '/voices' });
+    await openFilledForm(user);
+    await user.click(screen.getByRole('button', { name: 'Mulai kloning' }));
+    expect(await screen.findByText('Berkas lebih dari 95 MB. Ekspor ulang rekamannya sebagai MP3 atau M4A supaya lebih kecil.')).toBeInTheDocument();
+  });
+
+  it('hides the processing notice once the new voice is ready', async () => {
+    api.voices.mockResolvedValueOnce([]).mockResolvedValue([voice({ id: 'v9' })]);
+    createVoice.mockResolvedValue({ id: 'v9', status: 'processing' });
+    const user = userEvent.setup();
+    renderRoutes(routes, { path: '/voices' });
+    await openFilledForm(user);
+    await user.click(screen.getByRole('button', { name: 'Mulai kloning' }));
+    expect(await screen.findByTestId('voice-row')).toHaveAttribute('data-status', 'ready');
+    expect(screen.queryByText('Suara sedang diproses. Biasanya selesai dalam satu menit.')).not.toBeInTheDocument();
+  });
+
+  it('flags a preview that fails to play and retries with a fresh element', async () => {
+    const made = [];
+    class FakeAudio extends EventTarget {
+      constructor(src) { super(); this.src = src; this.dataset = {}; made.push(this); }
+      play() { return made.length === 1 ? Promise.reject(new Error('decode')) : (this.dispatchEvent(new Event('play')), Promise.resolve()); }
+      pause() { this.dispatchEvent(new Event('pause')); }
+    }
+    vi.stubGlobal('Audio', FakeAudio);
+    try {
+      api.voices.mockResolvedValue([voice()]);
+      const user = userEvent.setup();
+      renderRoutes(routes, { path: '/voices' });
+      const play = await screen.findByRole('button', { name: 'Dengarkan contoh Pandji' });
+      await user.click(play);
+      expect(play).toHaveAttribute('title', 'Contoh suara gagal diputar. Klik lagi untuk mencoba.');
+      await user.click(play);
+      expect(made).toHaveLength(2);
+      expect(play).toHaveAttribute('aria-pressed', 'true');
+      expect(play).not.toHaveAttribute('title');
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
