@@ -220,7 +220,8 @@ describe('VoicesPage', () => {
     expect(screen.queryByTestId('clone-form')).not.toBeInTheDocument();
     expect(api.voices).toHaveBeenCalledTimes(2);
     expect(api.me.mock.calls.length).toBeGreaterThan(meCalls);
-    expect(screen.getByTestId('voice-limit').parentElement).toHaveFocus();
+    // Focus moves in a passive effect, which can run after the commit that made the notice findable.
+    await vi.waitFor(() => expect(screen.getByTestId('voice-limit').parentElement).toHaveFocus());
   });
 
   it('moves focus to the limit notice when the last allowed voice is created', async () => {
@@ -232,7 +233,8 @@ describe('VoicesPage', () => {
     await openFilledForm(user);
     await user.click(screen.getByRole('button', { name: 'Mulai kloning' }));
     expect(await screen.findByTestId('voice-limit')).toBeInTheDocument();
-    expect(screen.getByTestId('voice-limit').parentElement).toHaveFocus();
+    // Focus moves in a passive effect, which can run after the commit that made the notice findable.
+    await vi.waitFor(() => expect(screen.getByTestId('voice-limit').parentElement).toHaveFocus());
     expect(screen.getByRole('button', { name: 'Kloning suara' })).toBeDisabled();
   });
 
