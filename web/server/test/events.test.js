@@ -35,6 +35,21 @@ describe('job events', () => {
     expect((await budi.get(`/api/jobs/${id}/events`)).status).toBe(404);
   });
 
+  it('skips the engine stream when the client leaves while ownership is checked', async () => {
+    const { body: { id } } = await ana.post('/api/jobs', { voiceId: voice.id, text: 'Satu.' });
+    const own = h.ctx.jobsRepo.own;
+    h.ctx.jobsRepo.own = async (...args) => {
+      await new Promise((r) => setTimeout(r, 300));
+      return own.apply(h.ctx.jobsRepo, args);
+    };
+    try {
+      await expect(ana.get(`/api/jobs/${id}/events`).timeout(50)).rejects.toThrow();
+      await new Promise((r) => setTimeout(r, 500));
+    } finally {
+      h.ctx.jobsRepo.own = own;
+    }
+    expect(h.engine.state.callsTo('GET', '/v1/jobs/:id/events').filter((c) => c.path.includes(id))).toEqual([]);
+  });
   it('reports an engine outage before the stream starts', async () => {
     const { body: { id } } = await ana.post('/api/jobs', { voiceId: voice.id, text: 'Satu.' });
     h.engine.state.failNext.set('GET /v1/jobs/:id/events', { status: 503, code: 'disk_full' });

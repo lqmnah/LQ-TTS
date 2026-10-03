@@ -23,9 +23,11 @@ export function translateEvent(block) {
 export function eventsRouter(ctx, { keepaliveMs = 15000 } = {}) {
   const router = express.Router();
   router.get('/jobs/:id/events', async (req, res) => {
-    const job = await ownJob(ctx, req.session.user_id, req.params.id);
+    // Listen before any await: a client that leaves during the ownership check must not open an engine stream.
     const abort = new AbortController();
     res.on('close', () => abort.abort());
+    const job = await ownJob(ctx, req.session.user_id, req.params.id);
+    if (abort.signal.aborted || res.destroyed) return;
     let upstream;
     try {
       upstream = await ctx.engine.stream(`/v1/jobs/${job.id}/events`, { signal: abort.signal, sse: true });
