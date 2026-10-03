@@ -1,0 +1,27 @@
+# syntax=docker/dockerfile:1
+ARG NODE_IMAGE=node:26.10.0-bookworm-slim@sha256:662933cf47f013bc8e4beb31a6116448427a82057ba7c42c97e4c5ba766504c2
+
+FROM ${NODE_IMAGE} AS client
+WORKDIR /app/client
+COPY client/package.json client/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY client/ ./
+RUN npm run build
+
+FROM ${NODE_IMAGE} AS server-deps
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --no-audit --no-fund
+
+FROM ${NODE_IMAGE}
+ENV NODE_ENV=production HOST=0.0.0.0 PORT=8080
+WORKDIR /app
+COPY --from=server-deps /app/node_modules ./node_modules
+COPY package.json ./
+COPY server/ ./server/
+COPY --from=client /app/client/dist ./client/dist
+USER node
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+  CMD ["node", "-e", "fetch('http://127.0.0.1:' + process.env.PORT + '/api/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+CMD ["node", "server/index.js"]

@@ -1,0 +1,49 @@
+name: lq-tts-web
+
+x-common: &common
+  restart: unless-stopped
+  stop_grace_period: 20s
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+
+services:
+  stg:
+    <<: *common
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: lq-tts-web:stg
+    container_name: lq-tts-web-stg
+    env_file:
+      - ${HOME}/.config/lq-tts/web-stg.env
+    environment:
+      DB_SCHEMA: lq_tts_web_stg
+      ENGINE_URL: http://host.internal:8740
+      ENGINE_CALLBACK_URL: http://127.0.0.1:8750/api/internal/engine-callback
+      LQSTUDIO_URL: http://100.80.128.19:3112
+      LQSTUDIO_PUBLIC_URL: https://demo.lq-studio.com
+      COOKIE_SECURE: "true"
+      MAX_UPLOAD_BYTES: "99614720"
+    ports:
+      - "127.0.0.1:8750:8080"
+
+  prod:
+    <<: *common
+    image: lq-tts-web:prod
+    container_name: lq-tts-web-prod
+    profiles: ["prod"]
+    env_file:
+      - ${HOME}/.config/lq-tts/web-prod.env
+    environment:
+      DB_SCHEMA: lq_tts_web
+      ENGINE_URL: http://host.internal:8740
+      ENGINE_CALLBACK_URL: http://127.0.0.1:8751/api/internal/engine-callback
+      LQSTUDIO_URL: http://100.80.128.19:3101
+      LQSTUDIO_PUBLIC_URL: https://lq-studio.com
+      COOKIE_SECURE: "true"
+      MAX_UPLOAD_BYTES: "99614720"
+    ports:
+      - "127.0.0.1:8751:8080"
