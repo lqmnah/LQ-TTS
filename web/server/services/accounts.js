@@ -4,6 +4,7 @@ import { lqError } from '../lib/upstream-errors.js';
 import { userTv } from './sessions.js';
 
 export const ME_CACHE_MS = 5 * 60 * 1000;
+export const OUTAGE_RETRY_MS = 60 * 1000;
 
 export function createAccounts({ sessions, lqstudio, engine, config }) {
   async function assertActive(user, userId) {
@@ -29,7 +30,10 @@ export function createAccounts({ sessions, lqstudio, engine, config }) {
         await sessions.revokeUser(session.user_id);
         throw new ApiError('unauthorized', 'account not found');
       }
-      if (session.balance !== null) return session; // LQ-Studio down: keep serving the cached copy
+      if (session.balance !== null) {
+        // LQ-Studio down: serve the cached copy, and ask again only after OUTAGE_RETRY_MS so every route stays fast.
+        return (await sessions.deferRefresh(session.id, session.user_id, ME_CACHE_MS, OUTAGE_RETRY_MS)) ?? session;
+      }
       throw lqError(err);
     }
     await assertActive(user, session.user_id);
@@ -38,9 +42,10 @@ export function createAccounts({ sessions, lqstudio, engine, config }) {
     const tv = userTv(user);
     await sessions.revokeBeforeTv(session.user_id, tv);
     if (session.user_tv < tv) throw new ApiError('unauthorized', 'please log in again');
-    // A lower tv is a read from before this session's login: serve the cache as is and ask again next time.
-    if (session.user_tv > tv) return session;
-    return (await sessions.refresh(session.id, user)) ?? session;
+    // A lower tv is a read from before this session's login: serve the cache as is (this request only) and ask again
+    // on the next one.
+    if (session.user_tv > tv) return { ...session, refreshed_at: new Date() };
+    return (await sessions.refresh(session.id, user, tv)) ?? session;
   }
 
   const voiceLimit = (paid) => (paid ? config.voiceLimitPaid : config.voiceLimitFree);

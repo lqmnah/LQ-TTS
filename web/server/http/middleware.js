@@ -1,4 +1,5 @@
 import { ApiError } from '../lib/errors.js';
+import { ME_CACHE_MS } from '../services/accounts.js';
 
 export const COOKIE = 'lqtts_sid';
 const MAX_AGE_MS = 30 * 24 * 3600 * 1000;
@@ -30,7 +31,7 @@ export function csrf(req, res, next) {
   return next();
 }
 
-export function requireAuth({ sessions, config }) {
+export function requireAuth({ sessions, accounts, config }) {
   return async (req, res, next) => {
     const raw = readSessionCookie(req);
     const session = await sessions.find(raw);
@@ -39,7 +40,9 @@ export function requireAuth({ sessions, config }) {
       throw new ApiError('unauthorized', 'please log in');
     }
     if (await sessions.slide(session)) setSessionCookie(res, raw, config);
-    req.session = session;
+    // Once the account cache is due, every route re-checks it: tokenVersion, suspension and verification apply everywhere.
+    const due = Date.now() - new Date(session.refreshed_at).getTime() >= ME_CACHE_MS;
+    req.session = due ? await accounts.fresh(session) : session;
     req.sessionRaw = raw;
     next();
   };

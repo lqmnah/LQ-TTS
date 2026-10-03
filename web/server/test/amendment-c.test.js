@@ -100,17 +100,20 @@ describe('C1 amendment C', () => {
     expect((await h.as(old).get('/api/me')).status).toBe(401);
   });
 
-  it('binds the session to the tv of the verified login, not of the later user read', async () => {
+  it('refuses a login whose credential was invalidated between verify and the user read', async () => {
     h.lq.state.beforeGetUser = (u) => {
       h.lq.state.beforeGetUser = null;
       u.tv += 1; // password changed between verify and users/:id
     };
-    const cookie = await h.login(USERS.ana);
+    const count = async () => (await h.pool.query(`SELECT count(*)::int AS n FROM sessions WHERE user_id = 'ana'`)).rows[0].n;
+    const before = await count();
+    const res = await request(h.app).post('/api/auth/login').set('x-requested-with', 'lq-tts')
+      .send({ identifier: USERS.ana.email, password: USERS.ana.password });
     expect(h.lq.state.beforeGetUser).toBeNull();
-    expect((await row(cookie)).user_tv).toBe(h.lq.state.users.get('ana').tv - 1);
-    await expire(cookie);
-    expect((await h.as(cookie).get('/api/me')).status).toBe(401);
-    expect((await row(cookie)).revoked_at).not.toBeNull();
+    expect(res.status).toBe(401);
+    expect(res.body.error.code).toBe('invalid_credentials');
+    expect(res.headers['set-cookie']).toBeUndefined();
+    expect(await count()).toBe(before);
   });
 
   it('a stale users/:id read (lower tv) neither logs out a newer session nor refreshes it', async () => {
@@ -130,5 +133,48 @@ describe('C1 amendment C', () => {
     const after = await row(cookie);
     expect(after.revoked_at).toBeNull();
     expect(after.refreshed_at).toEqual(before);
+  });
+
+  it('a stale read through an older session never renews the cache of a newer one', async () => {
+    const old = await h.login(USERS.poor);
+    const tv = (await row(old)).user_tv;
+    h.lq.bumpTv('poor');
+    const newer = await h.login(USERS.poor);
+    await expire(old);
+    await expire(newer);
+    const before = (await row(newer)).refreshed_at;
+    h.lq.state.beforeGetUser = () => {
+      h.lq.state.beforeGetUser = null;
+      return { tv }; // read from before the bump, answered after it
+    };
+    expect((await h.as(old).get('/api/me')).status).toBe(200);
+    expect(h.lq.state.beforeGetUser).toBeNull();
+    expect((await row(newer)).refreshed_at).toEqual(before);
+  });
+
+  it('a stale tv ends the session on every authenticated route, not only /api/me', async () => {
+    for (const path of ['/api/jobs', '/api/voices', `/api/jobs/${crypto.randomUUID()}/events`]) {
+      const cookie = await h.login(USERS.poor);
+      h.lq.bumpTv('poor');
+      await expire(cookie);
+      const res = await h.as(cookie).get(path);
+      expect(res.status, path).toBe(401);
+      expect(res.body.error.code, path).toBe('unauthorized');
+    }
+  });
+
+  it('asks LQ-Studio at most once a minute while it is down and serves the cache meanwhile', async () => {
+    const cookie = await h.login(USERS.budi);
+    await expire(cookie);
+    const calls = h.lq.state.callsTo('/users/budi').length;
+    h.lq.state.down = true;
+    try {
+      expect((await h.as(cookie).get('/api/jobs')).status).toBe(200);
+      expect((await h.as(cookie).get('/api/me')).status).toBe(200);
+      expect((await h.as(cookie).get('/api/me')).status).toBe(200);
+    } finally {
+      h.lq.state.down = false;
+    }
+    expect(h.lq.state.callsTo('/users/budi').length).toBe(calls + 1);
   });
 });

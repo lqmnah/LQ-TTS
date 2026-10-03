@@ -20,8 +20,11 @@ export function authRouter(ctx) {
     }
     if (!full.verified) return needsVerification;
     await accounts.assertActive(full, String(user.id));
-    // The session carries the tv of the verified login: a bump after verify must still end it.
-    const { raw, session } = await sessions.create({ ...user, ...full, tv: userTv(user) }, full.balance);
+    // tokenVersion moved after verify (password change, "log out everywhere"): the credential just checked is void.
+    const tv = userTv(user);
+    if (userTv(full) > tv) throw new ApiError('invalid_credentials', 'your password changed, please log in again');
+    // The session carries the tv of the verified login.
+    const { raw, session } = await sessions.create({ ...user, ...full, tv }, full.balance);
     setSessionCookie(res, raw, config);
     return { status: 'ok', user: await accounts.me(session) };
   }

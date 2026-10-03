@@ -5,7 +5,7 @@ import express from 'express';
 import { clientIp } from '../http/middleware.js';
 import { relayEngine } from '../http/relay.js';
 import { ApiError } from '../lib/errors.js';
-import { engineError } from '../lib/upstream-errors.js';
+import { engineError, isEngineNotFound } from '../lib/upstream-errors.js';
 import { ownVoice } from '../services/ownership.js';
 
 const AUDIO_EXTS = new Set(['.mp3', '.wav', '.m4a', '.flac']);
@@ -166,12 +166,29 @@ export function voicesRouter(ctx) {
   router.delete('/voices/:id', async (req, res) => {
     const userId = req.session.user_id;
     const voice = await ownVoice(ctx, userId, req.params.id);
+    // Read each job's state BEFORE the voice (and its jobs) leave the engine: finished work is settled, the rest refunded,
+    // exactly as DELETE /api/jobs/:id does. A job the engine cannot report on keeps its charges held for reconciliation.
+    const { rows: live } = await pool.query(
+      'SELECT id FROM jobs WHERE user_id = $1 AND voice_id = $2 AND deleted_at IS NULL', [userId, voice.id],
+    );
+    const views = new Map();
+    for (const { id } of live) {
+      try {
+        const view = await engine.getJob(id);
+        const stopped = view.status === 'queued' || view.status === 'running';
+        views.set(id, { status: stopped ? 'canceled' : view.status, revision: view.revision });
+      } catch (err) {
+        if (isEngineNotFound(err)) views.set(id, null);
+      }
+    }
     try {
       await engine.deleteVoice(voice.id);
     } catch (err) {
       throw engineError(err);
     }
-    for (const jobId of await jobsRepo.markVoiceDeleted(userId, voice.id)) await charges.resolveJob(jobId, null);
+    for (const jobId of await jobsRepo.markVoiceDeleted(userId, voice.id)) {
+      if (views.has(jobId)) await charges.resolveJob(jobId, views.get(jobId));
+    }
     res.status(204).end();
   });
 

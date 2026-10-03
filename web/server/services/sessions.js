@@ -50,11 +50,22 @@ export function createSessionStore(pool) {
         'UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND user_tv < $2 AND revoked_at IS NULL', [String(userId), tv],
       );
     },
-    async refresh(sessionId, user) {
+    // Renews only sessions opened at or before the read's tv, so a stale read never renews a newer session's cache.
+    async refresh(sessionId, user, tv) {
       const { rows } = await pool.query(
         `UPDATE sessions SET name = $2, email = $3, plan = $4, paid = $5, balance = $6, refreshed_at = now()
-         WHERE user_id = $1 AND revoked_at IS NULL RETURNING *`,
-        [String(user.id), user.name ?? '', user.email ?? '', user.plan ?? 'free', Boolean(user.paid), user.balance ?? null],
+         WHERE user_id = $1 AND revoked_at IS NULL AND user_tv <= $7 RETURNING *`,
+        [String(user.id), user.name ?? '', user.email ?? '', user.plan ?? 'free', Boolean(user.paid), user.balance ?? null, tv],
+      );
+      return rows.find((r) => r.id === sessionId) ?? null;
+    },
+    // LQ-Studio unreachable: mark the user's live sessions so the next refresh is due in retryMs, not on every request.
+    async deferRefresh(sessionId, userId, cacheMs, retryMs) {
+      const { rows } = await pool.query(
+        `UPDATE sessions SET refreshed_at = now() - make_interval(secs => $2::double precision / 1000)
+         WHERE user_id = $1 AND revoked_at IS NULL AND refreshed_at < now() - make_interval(secs => $2::double precision / 1000)
+         RETURNING *`,
+        [String(userId), cacheMs - retryMs],
       );
       return rows.find((r) => r.id === sessionId) ?? null;
     },

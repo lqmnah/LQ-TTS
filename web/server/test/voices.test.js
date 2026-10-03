@@ -117,6 +117,17 @@ describe('voices', () => {
     expect(charge.state).toBe('refunded');
     expect(h.lq.state.users.get('ana').balance).toBe(balance + 1);
   });
+
+  it('deleting a voice settles finished work whose callback has not arrived yet', async () => {
+    const doomed = h.engine.addVoice({ owner_ref: 'ana', name: 'Doomed too' });
+    const { body: { id: jobId } } = await ana.post('/api/jobs', { voiceId: doomed.id, text: 'Halo.' });
+    h.engine.setJob(jobId, { status: 'done' }); // finished; the callback is still on its way
+    const balance = h.lq.state.users.get('ana').balance;
+    expect((await ana.del(`/api/voices/${doomed.id}`)).status).toBe(204);
+    const { rows: [charge] } = await h.pool.query('SELECT state FROM charges WHERE job_id = $1', [jobId]);
+    expect(charge.state).toBe('settled');
+    expect(h.lq.state.users.get('ana').balance).toBe(balance);
+  });
 });
 
 describe('voice upload size limit', () => {
