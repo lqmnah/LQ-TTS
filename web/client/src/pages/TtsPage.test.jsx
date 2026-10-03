@@ -243,4 +243,21 @@ describe('TtsPage', () => {
     await waitFor(() => expect(screen.getByTestId('voice-select')).toHaveValue('v1'));
     expect(screen.queryByRole('option', { name: 'Pandji VO' })).not.toBeInTheDocument();
   });
+  it.each([['profiles first', ['profiles', 'voices']], ['own voices first', ['voices', 'profiles']]])(
+    '?voice= wins when %s resolve',
+    async (_, order) => {
+      window.localStorage.setItem('lqtts_draft:u1', JSON.stringify({ text: '', voiceId: 'v1', settings: {} }));
+      const pending = {};
+      api.voices.mockImplementation(() => new Promise((resolve) => { pending.voices = () => resolve([ready]); }));
+      api.voiceProfiles.mockImplementation(() => new Promise((resolve) => { pending.profiles = () => resolve([profile()]); }));
+      const { router } = renderRoutes(routes, { path: '/?voice=p1' });
+      await waitFor(() => expect(pending.voices && pending.profiles).toBeTruthy());
+      await act(async () => pending[order[0]]());
+      expect(router.state.location.search).toBe('?voice=p1');
+      await act(async () => pending[order[1]]());
+      await waitFor(() => expect(router.state.location.search).toBe(''));
+      expect(screen.getByTestId('voice-select')).toHaveValue('p1');
+      expect(JSON.parse(window.localStorage.getItem('lqtts_draft:u1')).voiceId).toBe('p1');
+    },
+  );
 });

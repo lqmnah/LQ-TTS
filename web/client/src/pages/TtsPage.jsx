@@ -77,16 +77,20 @@ export default function TtsPage() {
   const requestedUsable = requested !== null && (mine.some((v) => v.id === requested) || library.some((p) => p.id === requested));
 
   // A profile card links here with ?voice=<id>. Once both lists are known it becomes the draft's voice (when usable)
-  // and leaves the URL, so a later pick in the select is never overridden by the link.
+  // and leaves the URL, so a later pick in the select is never overridden by the link. The URL is cleared only after
+  // the draft holding it has committed (and been saved by the effect above), whatever order the lists resolved in.
   useEffect(() => {
-    if (requested === null || !settled) return;
-    if (requestedUsable) setDraft((d) => ({ ...d, voiceId: requested }));
+    if (requested !== null && settled && requestedUsable && draft.voiceId !== requested) {
+      setDraft((d) => ({ ...d, voiceId: requested }));
+    }
+  }, [requested, requestedUsable, settled, draft.voiceId]);
+  useEffect(() => {
+    if (requested === null || !settled || (requestedUsable && draft.voiceId !== requested)) return;
     setSearchParams((params) => {
       params.delete('voice');
       return params;
     }, { replace: true });
-  }, [requested, requestedUsable, settled, setSearchParams]);
-
+  }, [requested, requestedUsable, settled, draft.voiceId, setSearchParams]);
   const voiceId = pickVoice({ requested, saved: draft.voiceId, mine, profiles: library });
   const fresh = estimate !== null && estimate.forText === trimmed;
   const credits = fresh ? estimate.credits : creditsFor(chars);
