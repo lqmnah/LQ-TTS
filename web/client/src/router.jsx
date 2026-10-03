@@ -2,6 +2,7 @@ import AppShell from './components/AppShell.jsx';
 import RequireSession from './components/RequireSession.jsx';
 import LoginPage from './pages/LoginPage.jsx';
 import NotFoundPage from './pages/NotFoundPage.jsx';
+import TtsPage from './pages/TtsPage.jsx';
 import VoicesPage from './pages/VoicesPage.jsx';
 
 export const routes = [
@@ -10,6 +11,7 @@ export const routes = [
     path: '/',
     element: <RequireSession><AppShell /></RequireSession>,
     children: [
+      { index: true, element: <TtsPage /> },
       { path: 'voices', element: <VoicesPage /> },
       { path: '*', element: <NotFoundPage /> },
     ],
