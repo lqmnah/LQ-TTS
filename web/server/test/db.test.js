@@ -34,8 +34,8 @@ describe('migrate', () => {
 
   it('applies each migration once, even when run concurrently and repeatedly', async () => {
     await migrate(pool, schema);
-    const { rows } = await pool.query('SELECT name FROM schema_migrations');
-    expect(rows.map((r) => r.name)).toEqual(['001_init.sql']);
+    const { rows } = await pool.query('SELECT name FROM schema_migrations ORDER BY name');
+    expect(rows.map((r) => r.name)).toEqual(['001_init.sql', '002_regen_lease.sql']);
   });
 
   it('rejects unsafe schema names', async () => {

@@ -126,16 +126,17 @@ describe('regenerate, cancel and delete', () => {
   it('holds exactly once when two regenerations of a sentence race', async () => {
     const id = await doneJob();
     // Hold every request after its retry-numbering query so, unserialized, both pick the same ref before either
-    // inserts. Serialized, only one gets there; the timer stops the barrier from waiting for a second forever.
+    // inserts. Serialized, only one gets there; the timer, started at the first arrival, stops the barrier from waiting for a second forever.
     const query = h.pool.query;
     let release;
     const bothChecked = new Promise((r) => { release = r; });
-    const timer = setTimeout(() => release(), 300);
+    let timer;
     let checks = 0;
     h.pool.query = async function (...args) {
       const out = await query.apply(this, args);
       if (String(args[0]).includes('hold_id LIKE')) {
-        if (++checks === 2) release();
+        if (++checks === 1) timer = setTimeout(() => release(), 300);
+        else release();
         await bothChecked;
       }
       return out;
@@ -156,16 +157,17 @@ describe('regenerate, cancel and delete', () => {
   it('lets only one regeneration per job through when different sentences race', async () => {
     const id = await doneJob();
     // Hold every request just after the job-wide guard so, unserialized, both pass it before either holds.
-    // Serialized, only one reaches the guard; the timer stops the barrier from waiting for a second forever.
+    // Serialized, only one reaches the guard; the timer, started at the first arrival, stops the barrier from waiting for a second forever.
     const query = h.pool.query;
     let release;
     const passed = new Promise((r) => { release = r; });
-    const timer = setTimeout(() => release(), 300);
+    let timer;
     let checks = 0;
     h.pool.query = async function (...args) {
       const out = await query.apply(this, args);
       if (String(args[0]).includes('revision > $2')) {
-        if (++checks === 2) release();
+        if (++checks === 1) timer = setTimeout(() => release(), 300);
+        else release();
         await passed;
       }
       return out;
@@ -198,21 +200,97 @@ describe('regenerate, cancel and delete', () => {
     expect(holdsFor(`tts:${id}:`).at(-1).body.ref).toBe(`tts:${id}:r2:s0:a4`);
   });
 
-  it('releases the per-job lock after success and after an engine rejection', async () => {
-    const regenLocks = async (jobId) => (await h.pool.query(
-      `SELECT count(*)::int AS n FROM pg_locks, hashtextextended($1, 0) AS k
-       WHERE locktype = 'advisory' AND objsubid = 1
-         AND classid::bigint = (k >> 32) & 4294967295 AND objid::bigint = k & 4294967295`,
-      [`regen:${jobId}`],
-    )).rows[0].n;
+  const lease = async (jobId) => (await h.pool.query('SELECT regen_lease, regen_until FROM jobs WHERE id = $1', [jobId])).rows[0];
+  const leaseCleared = async (jobId) => {
+    // The release runs in finally, after the response is sent.
+    for (const until = Date.now() + 1000; Date.now() < until; await new Promise((r) => setTimeout(r, 20))) {
+      if ((await lease(jobId)).regen_lease === null) return true;
+    }
+    return false;
+  };
+
+  it('clears the lease after a 202 and after an engine 400', async () => {
     const ok = await doneJob();
     expect((await ana.post(`/api/jobs/${ok}/sentences/0/regenerate`, {})).status).toBe(202);
-    expect(await regenLocks(ok)).toBe(0);
+    expect(await leaseCleared(ok)).toBe(true);
+    expect((await lease(ok)).regen_until).toBeNull();
     const bad = await doneJob();
     h.engine.state.failNext.set('POST /v1/jobs/:id/sentences/:idx/regenerate', { status: 400, code: 'invalid_text', message: 'no' });
     expect((await ana.post(`/api/jobs/${bad}/sentences/0/regenerate`, {})).status).toBe(400);
-    expect(await regenLocks(bad)).toBe(0);
+    expect(await leaseCleared(bad)).toBe(true);
   });
+
+  it('takes over an expired lease', async () => {
+    const id = await doneJob();
+    await h.pool.query(
+      `UPDATE jobs SET regen_lease = gen_random_uuid(), regen_until = now() - interval '1 second' WHERE id = $1`, [id],
+    );
+    expect((await ana.post(`/api/jobs/${id}/sentences/0/regenerate`, {})).status).toBe(202);
+    expect(await leaseCleared(id)).toBe(true);
+  });
+
+  it('never clears a lease that a successor took after its own expired', async () => {
+    const id = await doneJob();
+    const regenerate = h.ctx.engine.regenerate;
+    let successor;
+    h.ctx.engine.regenerate = async (...args) => {
+      // Our lease expires mid-request and another request takes the job.
+      successor = (await h.pool.query(
+        `UPDATE jobs SET regen_lease = gen_random_uuid(), regen_until = now() + interval '60 seconds' WHERE id = $1
+         RETURNING regen_lease`, [id],
+      )).rows[0].regen_lease;
+      return regenerate(...args);
+    };
+    try {
+      expect((await ana.post(`/api/jobs/${id}/sentences/0/regenerate`, {})).status).toBe(202);
+    } finally {
+      h.ctx.engine.regenerate = regenerate;
+    }
+    await new Promise((r) => setTimeout(r, 100)); // let the release in finally run
+    expect((await lease(id)).regen_lease).toBe(successor);
+  });
+
+  it('refuses to cancel while a regeneration holds the lease', async () => {
+    const id = await doneJob();
+    const token = (await h.pool.query(
+      `UPDATE jobs SET regen_lease = gen_random_uuid(), regen_until = now() + interval '60 seconds' WHERE id = $1
+       RETURNING regen_lease`, [id],
+    )).rows[0].regen_lease;
+    const cancels = h.engine.state.callsTo('POST', '/v1/jobs/:id/cancel').length;
+    const res = await ana.post(`/api/jobs/${id}/cancel`);
+    expect(res.status).toBe(409);
+    expect(res.body.error).toEqual({ code: 'not_regeneratable', message: 'a previous change on this job is still being settled; try again shortly' });
+    expect(h.engine.state.callsTo('POST', '/v1/jobs/:id/cancel').length).toBe(cancels);
+    expect((await lease(id)).regen_lease).toBe(token); // someone else's lease is left alone
+  });
+
+  it('never starves the pool when more regenerations run than it has connections', async () => {
+    const n = h.pool.options.max + 2;
+    const ids = [];
+    for (let i = 0; i < n; i += 1) ids.push(await doneJob());
+    h.lq.state.users.get('ana').balance = 100;
+    const slow = (fn) => async (...args) => {
+      await new Promise((r) => setTimeout(r, 100));
+      return fn(...args);
+    };
+    const { engine, lqstudio } = h.ctx;
+    const orig = { sentences: engine.sentences, regenerate: engine.regenerate, hold: lqstudio.hold };
+    engine.sentences = slow(orig.sentences);
+    engine.regenerate = slow(orig.regenerate);
+    lqstudio.hold = slow(orig.hold);
+    let timer;
+    try {
+      const all = Promise.all(ids.map((id) => ana.post(`/api/jobs/${id}/sentences/0/regenerate`, {})));
+      const hung = new Promise((r) => { timer = setTimeout(() => r('hung'), 5000); });
+      const results = await Promise.race([all, hung]);
+      expect(results).not.toBe('hung');
+      expect(results.map((r) => r.status)).toEqual(ids.map(() => 202));
+    } finally {
+      clearTimeout(timer);
+      Object.assign(engine, { sentences: orig.sentences, regenerate: orig.regenerate });
+      lqstudio.hold = orig.hold;
+    }
+  }, 10000);
 
   it('cancelling a queued job refunds it at once', async () => {
     const id = await newJob();
