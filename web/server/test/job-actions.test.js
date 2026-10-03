@@ -86,6 +86,43 @@ describe('regenerate, cancel and delete', () => {
     expect(holdsFor(`tts:${id}:`)).toHaveLength(0);
   });
 
+  it('refuses to regenerate any sentence while another change on the job is still held', async () => {
+    const id = await doneJob();
+    // A sentence-0 charge for the next revision left held, as when an unknown hold's refund answered 404.
+    await h.pool.query(
+      `INSERT INTO charges (user_id, job_id, revision, kind, sentence_idx, chars, credits, hold_id)
+       VALUES ('ana', $1, 2, 'regenerate', 0, 4, 1, $2)`,
+      [id, `tts:${id}:r2:s0`],
+    );
+    const regenCalls = h.engine.state.callsTo('POST', '/v1/jobs/:id/sentences/:idx/regenerate').length;
+    const balance = h.lq.state.users.get('ana').balance;
+    const res = await ana.post(`/api/jobs/${id}/sentences/1/regenerate`, {});
+    expect(res.status).toBe(409);
+    expect(res.body.error).toEqual({ code: 'not_regeneratable', message: 'a previous change on this job is still being settled; try again shortly' });
+    expect(holdsFor(`tts:${id}:`)).toHaveLength(0);
+    expect(h.engine.state.callsTo('POST', '/v1/jobs/:id/sentences/:idx/regenerate').length).toBe(regenCalls);
+    expect(h.lq.state.users.get('ana').balance).toBe(balance);
+  });
+
+  it('records the revision the engine assigned on the charge', async () => {
+    const id = await doneJob();
+    const regenerate = h.ctx.engine.regenerate;
+    h.ctx.engine.regenerate = async (...args) => {
+      const out = await regenerate(...args);
+      return { ...out, revision: out.revision + 1 };
+    };
+    let res;
+    try {
+      res = await ana.post(`/api/jobs/${id}/sentences/0/regenerate`, {});
+    } finally {
+      h.ctx.engine.regenerate = regenerate;
+    }
+    expect(res.status).toBe(202);
+    expect(res.body.revision).toBe(3);
+    const charge = (await charges(id)).at(-1);
+    expect(charge).toMatchObject({ kind: 'regenerate', revision: 3, state: 'held', hold_id: `tts:${id}:r2:s0` });
+  });
+
   it('holds exactly once when two regenerations of a sentence race', async () => {
     const id = await doneJob();
     // Hold both requests after their "already held?" check so each passes it before either inserts:
@@ -96,7 +133,7 @@ describe('regenerate, cancel and delete', () => {
     let checks = 0;
     h.pool.query = async function (...args) {
       const out = await query.apply(this, args);
-      if (String(args[0]).includes("FILTER (WHERE state = 'held')")) {
+      if (String(args[0]).includes('hold_id LIKE')) {
         if (++checks === 2) release();
         await bothChecked;
       }

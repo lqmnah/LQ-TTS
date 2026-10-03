@@ -46,15 +46,21 @@ export function jobActionsRouter(ctx) {
     const credits = creditsFor(chars);
     const revision = view.revision + 1;
     const base = `tts:${job.id}:r${revision}:s${idx}`;
+    const busy = new ApiError('not_regeneratable', 'a previous change on this job is still being settled; try again shortly');
+    // Job-wide: decide() ignores sentence_idx, so a held charge for any sentence at a newer revision would be
+    // judged by this regeneration's outcome.
+    const { rowCount: held } = await pool.query(
+      `SELECT 1 FROM charges WHERE job_id = $1 AND state = 'held' AND revision > $2 LIMIT 1`,
+      [job.id, view.revision],
+    );
+    if (held > 0) throw busy;
     const { rows: [prior] } = await pool.query(
-      `SELECT count(*)::int AS n, count(*) FILTER (WHERE state = 'held')::int AS held
-       FROM charges WHERE hold_id = $1 OR hold_id LIKE $2`,
+      'SELECT count(*)::int AS n FROM charges WHERE hold_id = $1 OR hold_id LIKE $2',
       [base, `${base}:a%`],
     );
-    if (prior.held > 0) throw new ApiError('not_regeneratable', 'this sentence is already being regenerated');
     const holdId = prior.n === 0 ? base : `${base}:a${prior.n + 1}`;
     const charge = await charges.insertHeld({ userId, jobId: job.id, revision, kind: 'regenerate', sentenceIdx: idx, chars, credits, holdId });
-    if (!charge) throw new ApiError('not_regeneratable', 'this sentence is already being regenerated');
+    if (!charge) throw busy;
     await charges.hold(charge);
     let out;
     try {
@@ -62,6 +68,10 @@ export function jobActionsRouter(ctx) {
     } catch (err) {
       await charges.refundNow(charge);
       throw engineError(err);
+    }
+    if (out.revision !== revision) {
+      // decide() must judge the revision that actually does the work.
+      await pool.query(`UPDATE charges SET revision = $2 WHERE id = $1 AND state = 'held'`, [charge.id, out.revision]);
     }
     await jobsRepo.applyEngineState(job.id, { status: 'queued', revision: out.revision });
     res.status(202).json({ revision: out.revision, credits });
