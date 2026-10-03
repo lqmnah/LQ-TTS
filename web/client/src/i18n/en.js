@@ -197,6 +197,14 @@ export default {
   'voices.form.upload_progress': 'Upload progress',
   'voices.form.upload_busy': 'Another voice upload is still in progress. Wait for it to finish, then try again.',
   'voices.form.success': 'Your voice is processing. It usually takes about a minute.',
+  'voices.mine': 'My voices',
+
+  'profiles.title': 'VO Profile',
+  'profiles.subtitle': 'Ready-made voices for every account. They do not count toward your plan\'s voice limit.',
+  'profiles.tags': 'Voice traits',
+  'profiles.best_for': 'Good for',
+  'profiles.use': 'Use this voice',
+  'profiles.status_unknown': 'Voice status unavailable because the voice engine cannot be reached. The preview plays again later.',
 
   'history.title': 'History',
   'history.empty_title': 'No voiceovers yet',

@@ -5,6 +5,7 @@
 /** Answer of `/auth/login`; `/auth/2fa` gives the same minus `need_2fa`. @typedef {{status:'ok', user:Me} | {status:'need_2fa', challenge:string} | {status:'needs_verification', verifyUrl:string}} LoginResult */
 /** @typedef {{engine:'ok'|'restarting', lqstudio:'ok'|'down', signupUrl:string}} Health */
 /** `previewUrl` is null until the voice is ready. @typedef {{id:string, name:string, language:string|null, status:'processing'|'ready'|'failed', errorCode:string|null, refSeconds:number|null, createdAt:string, previewUrl:string|null}} Voice */
+/** VO Profile (library voice usable by every account). `status` is null when the engine is unreachable. @typedef {{id:string, slug:string, name:string, gender:'male'|'female'|'neutral', language:'id'|'en', status:'processing'|'ready'|'failed'|null, errorCode:string|null, description:{id:string, en:string}, tags:Array<{id:string, en:string}>, bestFor:{id:string, en:string}, previewUrl:string}} VoiceProfile */
 /** @typedef {{chars:number, credits:number, rupiah:number, balance:number|null, sentences:number}} Estimate */
 /** @typedef {{speed:number, pause_sentence_s:number, pause_paragraph_s:number, formats:Array<'mp3'|'wav'|'srt'|'vtt'>}} JobSettings */
 /** @typedef {{id:string, title:string, voiceId:string, voiceName:string, status:'queued'|'running'|'done'|'failed'|'canceled', chars:number, credits:number, audioSeconds:number|null, revision:number, createdAt:string, finishedAt:string|null}} JobSummary */

@@ -6,16 +6,25 @@ import VoicesPage from './VoicesPage.jsx';
 
 vi.mock('../lib/api.js', async (importOriginal) => {
   const mod = await importOriginal();
-  return { ...mod, api: { voices: vi.fn(), deleteVoice: vi.fn(), me: vi.fn() }, createVoice: vi.fn() };
+  return { ...mod, api: { voices: vi.fn(), voiceProfiles: vi.fn(), deleteVoice: vi.fn(), me: vi.fn() }, createVoice: vi.fn() };
 });
 const { api, createVoice, ApiError } = await import('../lib/api.js');
 
 const voice = (over) => ({ id: 'v1', name: 'Pandji', language: 'id', status: 'ready', errorCode: null, refSeconds: 14.2, createdAt: '2026-10-03T08:00:00.000Z', previewUrl: '/api/voices/v1/preview', ...over });
 const routes = [{ path: '/voices', element: <VoicesPage /> }];
+const profile = (over) => ({
+  id: 'p1', slug: 'pandji', name: 'Pandji', gender: 'male', language: 'id', status: 'ready', errorCode: null,
+  description: { id: 'Pria, bariton hangat.', en: 'Male, warm baritone.' },
+  tags: [{ id: 'Pria', en: 'Male' }, { id: 'Tegas', en: 'Firm' }],
+  bestFor: { id: 'Narasi, podcast.', en: 'Narration, podcasts.' },
+  previewUrl: '/api/voices/p1/preview',
+  ...over,
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
   api.me.mockResolvedValue(ME);
+  api.voiceProfiles.mockResolvedValue([]);
 });
 
 describe('VoicesPage', () => {
@@ -286,5 +295,70 @@ describe('VoicesPage', () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  it('shows VO Profile cards above my voices, without delete and outside the limit', async () => {
+    api.voices.mockResolvedValue([voice({ id: 'v1', name: 'Suara Ana' })]);
+    api.voiceProfiles.mockResolvedValue([profile(), profile({ id: 'p2', name: 'Gagal', status: 'failed' })]);
+    renderRoutes(routes, { path: '/voices' });
+    const card = await screen.findByTestId('profile-card');
+    expect(screen.getAllByTestId('profile-card')).toHaveLength(1);
+    expect(card).toHaveAttribute('data-status', 'ready');
+    expect(within(card).getByText('Pandji')).toBeInTheDocument();
+    expect(within(card).getByText('Pria, bariton hangat.')).toBeInTheDocument();
+    expect(within(card).getByRole('list', { name: 'Ciri suara' })).toHaveTextContent('PriaTegas');
+    expect(within(card).getByText('Cocok untuk')).toBeInTheDocument();
+    expect(within(card).getByText('Narasi, podcast.')).toBeInTheDocument();
+    expect(within(card).getByRole('link', { name: 'Pakai suara ini' })).toHaveAttribute('href', '/?voice=p1');
+    expect(within(card).getByRole('button', { name: 'Dengarkan contoh Pandji' })).toBeEnabled();
+    expect(within(card).queryByRole('button', { name: /Hapus/ })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('heading', { level: 2 }).map((el) => el.textContent)).toEqual(['VO Profile', 'Suara saya']);
+    expect(screen.getByText('1 dari 3 suara terpakai')).toBeInTheDocument();
+  });
+
+  it('shows the profile card in English', async () => {
+    api.voices.mockResolvedValue([]);
+    api.voiceProfiles.mockResolvedValue([profile()]);
+    renderRoutes(routes, { path: '/voices', lang: 'en', me: { ...ME, lang: 'en' } });
+    const card = await screen.findByTestId('profile-card');
+    expect(within(card).getByText('Male, warm baritone.')).toBeInTheDocument();
+    expect(within(card).getByRole('list', { name: 'Voice traits' })).toHaveTextContent('MaleFirm');
+    expect(within(card).getByText('Good for')).toBeInTheDocument();
+    expect(within(card).getByText('Narration, podcasts.')).toBeInTheDocument();
+    expect(within(card).getByRole('link', { name: 'Use this voice' })).toHaveAttribute('href', '/?voice=p1');
+    expect(screen.getByRole('heading', { level: 2, name: 'My voices' })).toBeInTheDocument();
+  });
+
+  it('marks a processing profile and one whose status is unknown, with preview and use disabled', async () => {
+    api.voices.mockResolvedValue([]);
+    api.voiceProfiles.mockResolvedValue([profile({ id: 'p1', name: 'Proses', status: 'processing' }), profile({ id: 'p2', name: 'Luring', status: null })]);
+    renderRoutes(routes, { path: '/voices' });
+    await screen.findAllByTestId('profile-card');
+    const [busy, offline] = screen.getAllByTestId('profile-card');
+    expect(within(busy).getByText('Diproses')).toBeInTheDocument();
+    expect(within(busy).getByRole('button', { name: 'Dengarkan contoh Proses' })).toBeDisabled();
+    expect(within(busy).getByRole('button', { name: 'Pakai suara ini' })).toBeDisabled();
+    expect(offline).toHaveAttribute('data-status', 'unknown');
+    expect(within(offline).getByText(/^Status suara belum terbaca/)).toBeInTheDocument();
+    expect(within(offline).getByRole('button', { name: 'Dengarkan contoh Luring' })).toBeDisabled();
+  });
+
+  it('hides the section when there is no profile to show', async () => {
+    api.voices.mockResolvedValue([voice({ id: 'v1', name: 'Suara Ana' })]);
+    api.voiceProfiles.mockResolvedValue([profile({ status: 'failed' })]);
+    renderRoutes(routes, { path: '/voices' });
+    await screen.findByText('Suara Ana');
+    expect(screen.queryByRole('heading', { name: 'VO Profile' })).not.toBeInTheDocument();
+    expect(screen.queryByTestId('profile-card')).not.toBeInTheDocument();
+  });
+
+  it('offers a retry when the profiles cannot load', async () => {
+    api.voices.mockResolvedValue([]);
+    api.voiceProfiles.mockRejectedValueOnce(new ApiError(503, 'engine_unavailable', '')).mockResolvedValue([profile()]);
+    const user = userEvent.setup();
+    renderRoutes(routes, { path: '/voices' });
+    expect(await screen.findByText('Mesin suara sedang tidak dapat dihubungi. Coba lagi sebentar lagi.')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Coba lagi' }));
+    expect(await screen.findByTestId('profile-card')).toBeInTheDocument();
   });
 });

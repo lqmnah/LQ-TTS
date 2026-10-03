@@ -197,6 +197,14 @@ export default {
   'voices.form.upload_progress': 'Progres unggahan',
   'voices.form.upload_busy': 'Masih ada unggahan suara lain yang berjalan. Tunggu sampai selesai, lalu coba lagi.',
   'voices.form.success': 'Suara sedang diproses. Biasanya selesai dalam satu menit.',
+  'voices.mine': 'Suara saya',
+
+  'profiles.title': 'VO Profile',
+  'profiles.subtitle': 'Suara siap pakai untuk semua akun. Tidak dihitung dalam batas suara paket kamu.',
+  'profiles.tags': 'Ciri suara',
+  'profiles.best_for': 'Cocok untuk',
+  'profiles.use': 'Pakai suara ini',
+  'profiles.status_unknown': 'Status suara belum terbaca karena mesin suara tidak dapat dihubungi. Contoh suara bisa diputar lagi nanti.',
 
   'history.title': 'Riwayat',
   'history.empty_title': 'Belum ada voiceover',
