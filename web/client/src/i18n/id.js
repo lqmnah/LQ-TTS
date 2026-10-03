@@ -205,6 +205,7 @@ export default {
   'profiles.tags': 'Ciri suara',
   'profiles.best_for': 'Cocok untuk',
   'profiles.use': 'Pakai suara ini',
+  'profiles.use_named': 'Pakai suara ini: {name}',
   'profiles.status_unknown': 'Status suara belum terbaca karena mesin suara tidak dapat dihubungi. Contoh suara bisa diputar lagi nanti.',
 
   'history.title': 'Riwayat',

@@ -205,7 +205,8 @@ export default {
   'profiles.tags': 'Voice traits',
   'profiles.best_for': 'Good for',
   'profiles.use': 'Use this voice',
-  'profiles.status_unknown': 'Voice status unavailable because the voice engine cannot be reached. The preview plays again later.',
+  'profiles.use_named': 'Use this voice: {name}',
+  'profiles.status_unknown': 'Voice status unavailable because the voice engine cannot be reached. You can play the preview once it is back.',
 
   'history.title': 'History',
   'history.empty_title': 'No voiceovers yet',

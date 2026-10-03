@@ -309,7 +309,7 @@ describe('VoicesPage', () => {
     expect(within(card).getByRole('list', { name: 'Ciri suara' })).toHaveTextContent('PriaTegas');
     expect(within(card).getByText('Cocok untuk')).toBeInTheDocument();
     expect(within(card).getByText('Narasi, podcast.')).toBeInTheDocument();
-    expect(within(card).getByRole('link', { name: 'Pakai suara ini' })).toHaveAttribute('href', '/?voice=p1');
+    expect(within(card).getByRole('link', { name: 'Pakai suara ini: Pandji' })).toHaveAttribute('href', '/?voice=p1');
     expect(within(card).getByRole('button', { name: 'Dengarkan contoh Pandji' })).toBeEnabled();
     expect(within(card).queryByRole('button', { name: /Hapus/ })).not.toBeInTheDocument();
     expect(screen.getAllByRole('heading', { level: 2 }).map((el) => el.textContent)).toEqual(['VO Profile', 'Suara saya']);
@@ -325,7 +325,7 @@ describe('VoicesPage', () => {
     expect(within(card).getByRole('list', { name: 'Voice traits' })).toHaveTextContent('MaleFirm');
     expect(within(card).getByText('Good for')).toBeInTheDocument();
     expect(within(card).getByText('Narration, podcasts.')).toBeInTheDocument();
-    expect(within(card).getByRole('link', { name: 'Use this voice' })).toHaveAttribute('href', '/?voice=p1');
+    expect(within(card).getByRole('link', { name: 'Use this voice: Pandji' })).toHaveAttribute('href', '/?voice=p1');
     expect(screen.getByRole('heading', { level: 2, name: 'My voices' })).toBeInTheDocument();
   });
 
@@ -337,7 +337,7 @@ describe('VoicesPage', () => {
     const [busy, offline] = screen.getAllByTestId('profile-card');
     expect(within(busy).getByText('Diproses')).toBeInTheDocument();
     expect(within(busy).getByRole('button', { name: 'Dengarkan contoh Proses' })).toBeDisabled();
-    expect(within(busy).getByRole('button', { name: 'Pakai suara ini' })).toBeDisabled();
+    expect(within(busy).getByRole('button', { name: 'Pakai suara ini: Proses' })).toBeDisabled();
     expect(offline).toHaveAttribute('data-status', 'unknown');
     expect(within(offline).getByText(/^Status suara belum terbaca/)).toBeInTheDocument();
     expect(within(offline).getByRole('button', { name: 'Dengarkan contoh Luring' })).toBeDisabled();
