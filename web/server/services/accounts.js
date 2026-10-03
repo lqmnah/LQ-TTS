@@ -37,7 +37,9 @@ export function createAccounts({ sessions, lqstudio, engine, config }) {
     // whichever session asks, and an answer read before a bump can never end sessions opened after it.
     const tv = userTv(user);
     await sessions.revokeBeforeTv(session.user_id, tv);
-    if (tv !== session.user_tv) throw new ApiError('unauthorized', 'please log in again');
+    if (session.user_tv < tv) throw new ApiError('unauthorized', 'please log in again');
+    // A lower tv is a read from before this session's login: serve the cache as is and ask again next time.
+    if (session.user_tv > tv) return session;
     return (await sessions.refresh(session.id, user)) ?? session;
   }
 

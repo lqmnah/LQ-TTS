@@ -112,4 +112,23 @@ describe('C1 amendment C', () => {
     expect((await h.as(cookie).get('/api/me')).status).toBe(401);
     expect((await row(cookie)).revoked_at).not.toBeNull();
   });
+
+  it('a stale users/:id read (lower tv) neither logs out a newer session nor refreshes it', async () => {
+    const cookie = await h.login(USERS.budi);
+    const tv = (await row(cookie)).user_tv;
+    expect(tv).toBeGreaterThan(0);
+    h.lq.state.beforeGetUser = () => {
+      h.lq.state.beforeGetUser = null;
+      return { tv: tv - 1, balance: 7 };
+    };
+    await expire(cookie);
+    const before = (await row(cookie)).refreshed_at;
+    const res = await h.as(cookie).get('/api/me');
+    expect(h.lq.state.beforeGetUser).toBeNull();
+    expect(res.status).toBe(200);
+    expect(res.body.balance).not.toBe(7);
+    const after = await row(cookie);
+    expect(after.revoked_at).toBeNull();
+    expect(after.refreshed_at).toEqual(before);
+  });
 });

@@ -88,8 +88,9 @@ export async function startFakeLqStudio({ port = 0, token, users = [] } = {}) {
       if (req.method === 'GET' && path.startsWith('/users/')) {
         const u = state.users.get(decodeURIComponent(path.slice('/users/'.length)));
         if (!u) return json(res, 404, { error: 'not_found' });
-        state.beforeGetUser?.(u); // test hook, e.g. bump tv between verify and this read
-        return json(res, 200, { ...pub(u), balance: u.balance, suspended: u.suspended, verified: u.verified });
+        // Test hook: may change the user (e.g. bump tv between verify and this read) or return fields to answer instead.
+        const override = state.beforeGetUser?.(u) ?? {};
+        return json(res, 200, { ...pub(u), balance: u.balance, suspended: u.suspended, verified: u.verified, ...override });
       }
       if (req.method === 'POST' && path === '/credits/hold') {
         if (!Number.isSafeInteger(body.amount) || body.amount <= 0) return invalidAmount(res);
