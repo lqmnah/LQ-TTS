@@ -14,9 +14,10 @@ const CURSOR_AT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
 function parseCursor(raw) {
   const [at, id, extra] = String(raw).split('|');
   const date = new Date(at);
-  // Date rolls impossible days over (Feb 30 → Mar 2) where Postgres refuses them: require a clean round trip.
+  // Date accepts year 0 and rolls impossible days over (Feb 30 → Mar 2), both of which Postgres refuses:
+  // require year ≥ 1 and a clean round trip.
   if (extra !== undefined || !CURSOR_AT.test(at) || !isUuid(id) || Number.isNaN(date.getTime())
-    || date.toISOString().slice(0, 23) !== at.slice(0, 23)) {
+    || date.getUTCFullYear() < 1 || date.toISOString().slice(0, 23) !== at.slice(0, 23)) {
     throw new ApiError('invalid_request', 'before must be the nextBefore of a previous page');
   }
   return { createdAt: at, id };

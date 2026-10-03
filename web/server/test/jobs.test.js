@@ -145,7 +145,8 @@ describe('voiceover jobs', () => {
     expect(second.body.nextBefore).toBeNull();
     expect((await budi.get('/api/jobs?limit=0')).status).toBe(400);
     for (const bad of [
-      first.body.items[1].createdAt, `2026-02-30T10:00:00.000000Z|${ids[0]}`, '2026-10-03T10:00:00.000000Z|not-a-uuid', 'x',
+      first.body.items[1].createdAt, `2026-02-30T10:00:00.000000Z|${ids[0]}`, `0000-01-01T00:00:00.000000Z|${ids[0]}`,
+      '2026-10-03T10:00:00.000000Z|not-a-uuid', 'x',
     ]) {
       const res = await budi.get(`/api/jobs?before=${encodeURIComponent(bad)}`);
       expect(res.status).toBe(400);
