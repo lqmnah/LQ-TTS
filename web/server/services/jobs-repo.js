@@ -35,6 +35,13 @@ export function createJobsRepo(pool) {
       const { rows: [row] } = await pool.query('SELECT * FROM jobs WHERE id = $1', [id]);
       return row ?? null;
     },
+    // Deleting an engine voice deletes every engine job made with it: a voice that live jobs use must stay.
+    async usesVoice(voiceId) {
+      const { rows: [row] } = await pool.query(
+        'SELECT EXISTS (SELECT 1 FROM jobs WHERE voice_id = $1 AND deleted_at IS NULL) AS used', [voiceId],
+      );
+      return row.used;
+    },
     // Newest first, ties broken by id. `cursor` (created_at to the microsecond, UTC, plus id) resumes after a row;
     // `before` is that cursor parsed as {createdAt, id}.
     async list(userId, { limit, before }) {
