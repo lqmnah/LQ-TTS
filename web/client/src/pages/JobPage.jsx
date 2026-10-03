@@ -41,6 +41,7 @@ export default function JobPage() {
   const [deleting, setDeleting] = useState(false);
   const estimatedSeconds = location.state?.estimatedSeconds ?? null;
 
+  /** Loads the snapshot; resolves to `{job}` or `{error}`. */
   const load = useCallback(async () => {
     try {
       const [nextJob, nextSentences] = await Promise.all([api.job(id), api.sentences(id)]);
@@ -49,8 +50,12 @@ export default function JobPage() {
       setRevision(null);
       setLoadError(null);
       dispatch({ type: 'snapshot', job: nextJob, sentences: nextSentences });
+      return { job: nextJob };
     } catch (err) {
       setLoadError(err);
+      // Deleted meanwhile (another tab): drop the stale view so the not-found state shows.
+      if (err?.code === 'not_found') setJob(null);
+      return { error: err };
     }
   }, [id]);
 
@@ -84,7 +89,16 @@ export default function JobPage() {
         const delay = RETRY_DELAYS_MS[Math.min(attemptRef.current, RETRY_DELAYS_MS.length - 1)];
         attemptRef.current += 1;
         timer = setTimeout(async () => {
-          await load();
+          const { job: next, error } = await load();
+          if (next && TERMINAL.has(next.status)) {
+            setConnection('idle');
+            setCanceling(false);
+            if (next.status === 'done') setJustFinished(true);
+            refresh();
+            return;
+          }
+          // Gone for good: stay on the not-found state. Any other failure keeps backing off via a fresh stream.
+          if (error?.code === 'not_found') return;
           setStreamKey((k) => k + 1);
         }, delay);
       },
@@ -226,6 +240,9 @@ export default function JobPage() {
           <Notice tone="danger">
             {actionError.source === 'cancel' && actionError.err?.code === 'not_regeneratable' ? t('job.cancel_busy') : errorText(t, actionError.err)}
           </Notice>
+        ) : null}
+        {loadError && job ? (
+          <Notice tone="danger" action={<Button size="sm" onClick={load}>{t('common.retry')}</Button>}>{errorText(t, loadError)}</Notice>
         ) : null}
       </section>
 

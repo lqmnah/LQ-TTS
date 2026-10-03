@@ -262,6 +262,73 @@ describe('JobPage', () => {
       vi.useRealTimers();
       await waitFor(() => expect(openJobEvents).toHaveBeenCalledTimes(2));
     });
+
+    async function closeAndReload() {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      act(() => handlers.onError({ closed: true }));
+      await act(async () => vi.advanceTimersByTime(2000));
+      vi.useRealTimers();
+    }
+
+    it('shows the not-found state and stops reopening when the job was deleted meanwhile', async () => {
+      const { ApiError } = await import('../lib/api.js');
+      api.job.mockResolvedValue(job());
+      api.sentences.mockResolvedValue([sentence(0, 'pending')]);
+      renderRoutes(routes, { path: '/jobs/j1' });
+      await screen.findByText('0 dari 1 kalimat');
+      api.job.mockRejectedValue(new ApiError(404, 'not_found', ''));
+      api.sentences.mockRejectedValue(new ApiError(404, 'not_found', ''));
+      await closeAndReload();
+      expect(await screen.findByText('Voiceover tidak ditemukan')).toBeInTheDocument();
+      await new Promise((r) => setTimeout(r, 20));
+      expect(openJobEvents).toHaveBeenCalledTimes(1);
+    });
+
+    it('shows other reload failures and keeps trying', async () => {
+      const { ApiError } = await import('../lib/api.js');
+      api.job.mockResolvedValue(job());
+      api.sentences.mockResolvedValue([sentence(0, 'pending')]);
+      renderRoutes(routes, { path: '/jobs/j1' });
+      await screen.findByText('0 dari 1 kalimat');
+      api.job.mockRejectedValue(new ApiError(503, 'engine_unavailable', ''));
+      await closeAndReload();
+      expect(await screen.findByText('Mesin suara sedang tidak dapat dihubungi. Coba lagi sebentar lagi.')).toBeInTheDocument();
+      await waitFor(() => expect(openJobEvents).toHaveBeenCalledTimes(2));
+    });
+
+    it('settles a job that ended while the stream was down: balance refresh, Cancel reset, no reopen', async () => {
+      api.job.mockResolvedValue(job());
+      api.sentences.mockResolvedValue([sentence(0, 'pending')]);
+      api.cancelJob.mockReturnValue(new Promise(() => {}));
+      const user = userEvent.setup();
+      renderRoutes(routes, { path: '/jobs/j1' });
+      await user.click(await screen.findByRole('button', { name: 'Batalkan proses' }));
+      expect(screen.getByRole('button', { name: 'Batalkan proses' })).toHaveAttribute('aria-busy', 'true');
+      const meCalls = api.me.mock.calls.length;
+      api.job.mockResolvedValue(job({ status: 'failed', errorCode: 'synthesis_failed' }));
+      await closeAndReload();
+      expect(await screen.findByText('Mesin gagal membuat audio untuk naskah ini. Kredit sudah dikembalikan.')).toBeInTheDocument();
+      await waitFor(() => expect(api.me.mock.calls.length).toBeGreaterThan(meCalls));
+      expect(openJobEvents).toHaveBeenCalledTimes(1);
+    });
+
+    it('clears a pending Cancel when the reload finds the job done, so a later regenerate can cancel again', async () => {
+      api.job.mockResolvedValue(job());
+      api.sentences.mockResolvedValue([sentence(0, 'pending')]);
+      api.cancelJob.mockReturnValue(new Promise(() => {}));
+      api.regenerate.mockResolvedValue({ revision: 2, credits: 1 });
+      const user = userEvent.setup();
+      renderRoutes(routes, { path: '/jobs/j1' });
+      await user.click(await screen.findByRole('button', { name: 'Batalkan proses' }));
+      api.job.mockResolvedValue(job({ status: 'done', files: FILES }));
+      api.sentences.mockResolvedValue([sentence(0, 'done')]);
+      await closeAndReload();
+      expect(await screen.findByTestId('job-finished')).toBeInTheDocument();
+      const row = screen.getByTestId('sentence-0');
+      await user.click(within(row).getByRole('button', { name: 'Ubah' }));
+      await user.click(within(row).getByRole('button', { name: 'Buat ulang' }));
+      expect(await screen.findByRole('button', { name: 'Batalkan proses' })).not.toHaveAttribute('aria-busy');
+    });
   });
 
   describe('single audio', () => {
