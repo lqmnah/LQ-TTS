@@ -8,7 +8,11 @@ const IDENT = /^[a-z_][a-z0-9_]{0,62}$/;
 
 export function createPool(databaseUrl, schema, { max = 10 } = {}) {
   if (!IDENT.test(schema)) throw new Error(`unsafe schema name ${schema}`);
-  return new pg.Pool({ connectionString: databaseUrl, max, options: `-c search_path=${schema}` });
+  const pool = new pg.Pool({ connectionString: databaseUrl, max, options: `-c search_path=${schema}` });
+  pool.on('error', (err) => {
+    process.stderr.write(JSON.stringify({ level: 'warn', msg: 'pg_idle_client_error', error: err.message }) + '\n');
+  });
+  return pool;
 }
 
 export async function migrate(pool, schema) {

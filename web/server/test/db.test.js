@@ -3,11 +3,29 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createPool, migrate } from '../db/pool.js';
 import { testDatabaseUrl } from './db-url.js';
 
+const UNSAFE = 'x"; DROP SCHEMA public; --';
+
+describe('createPool', () => {
+  it('survives an idle client error instead of crashing the process', async () => {
+    const pool = createPool(testDatabaseUrl(), `t_${crypto.randomBytes(6).toString('hex')}`);
+    try {
+      expect(() => pool.emit('error', new Error('boom'))).not.toThrow();
+    } finally {
+      await pool.end();
+    }
+  });
+
+  it('rejects unsafe schema names', () => {
+    expect(() => createPool(testDatabaseUrl(), UNSAFE)).toThrow(/unsafe schema/);
+  });
+});
+
 describe('migrate', () => {
   const schema = `t_${crypto.randomBytes(6).toString('hex')}`;
   let pool;
-  beforeAll(() => {
+  beforeAll(async () => {
     pool = createPool(testDatabaseUrl(), schema, { max: 3 });
+    await Promise.all([migrate(pool, schema), migrate(pool, schema)]);
   });
   afterAll(async () => {
     await pool.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
@@ -15,10 +33,13 @@ describe('migrate', () => {
   });
 
   it('applies each migration once, even when run concurrently and repeatedly', async () => {
-    await Promise.all([migrate(pool, schema), migrate(pool, schema)]);
     await migrate(pool, schema);
     const { rows } = await pool.query('SELECT name FROM schema_migrations');
     expect(rows.map((r) => r.name)).toEqual(['001_init.sql']);
+  });
+
+  it('rejects unsafe schema names', async () => {
+    await expect(migrate(pool, UNSAFE)).rejects.toThrow(/unsafe schema/);
   });
 
   it('never stores two charges with the same hold id', async () => {
