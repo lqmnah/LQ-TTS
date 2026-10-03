@@ -2,6 +2,7 @@ name: lq-tts-web
 
 x-common: &common
   restart: unless-stopped
+  stop_grace_period: 20s
   logging:
     driver: json-file
     options:

@@ -16,13 +16,23 @@ if (!values.from || !values.to) fail('usage: node ops/env-container.mjs --from <
 const source = readEnvFile(values.from);
 const out = readEnvFile(values.to);
 if (!source.DATABASE_URL) fail(`${values.from} has no DATABASE_URL`);
-out.DATABASE_URL = toContainerDatabaseUrl(source.DATABASE_URL);
+try {
+  out.DATABASE_URL = toContainerDatabaseUrl(source.DATABASE_URL);
+} catch {
+  fail(`${values.from} DATABASE_URL is not a valid URL (value hidden)`);
+}
 
 const caller = values['engine-caller'];
 if (caller) {
   const engine = readEnvFile(values['engine-env'] ?? '../engine/.env');
-  const tokens = parsePairs(engine.LQTTS_TOKENS);
-  const secrets = parsePairs(engine.LQTTS_CALLBACK_SECRETS);
+  let tokens;
+  let secrets;
+  try {
+    tokens = parsePairs(engine.LQTTS_TOKENS);
+    secrets = parsePairs(engine.LQTTS_CALLBACK_SECRETS);
+  } catch {
+    fail('LQTTS_TOKENS/LQTTS_CALLBACK_SECRETS are not name:value pairs (values hidden)');
+  }
   if (!tokens[caller] || !secrets[caller]) fail(`engine caller ${caller} not found in LQTTS_TOKENS/LQTTS_CALLBACK_SECRETS`);
   out.ENGINE_TOKEN = tokens[caller];
   out.ENGINE_CALLBACK_SECRET = secrets[caller];
@@ -32,5 +42,9 @@ if (caller) {
     out[key] = source[key];
   }
 }
-writeEnvFile(values.to, out);
+try {
+  writeEnvFile(values.to, out);
+} catch (error) {
+  fail(error.message);
+}
 console.log(`wrote ${Object.keys(out).sort().join(', ')} to ${values.to} (values hidden)`);

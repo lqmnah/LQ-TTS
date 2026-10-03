@@ -14,5 +14,9 @@ if (!value || /[\r\n]/.test(value)) {
   console.error(`refusing: value for ${key} is empty or spans several lines`);
   process.exit(1);
 }
+if (value.includes("'")) {
+  console.error(`refusing: value for ${key} contains a single quote, which env files here cannot hold`);
+  process.exit(1);
+}
 setEnvKey(file, key, value);
 console.log(`${key} written to ${file} (value hidden, ${value.length} chars)`);

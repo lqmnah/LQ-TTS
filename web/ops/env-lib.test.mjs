@@ -17,7 +17,16 @@ test('writes mode 600 atomically and round-trips', () => {
   setEnvKey(file, 'B', 'secret-value');
   assert.equal(statSync(file).mode & 0o777, 0o600);
   assert.deepEqual(readEnvFile(file), { A: '1', B: 'secret-value' });
-  assert.equal(readFileSync(file, 'utf8'), 'A=1\nB=secret-value\n');
+  assert.equal(readFileSync(file, 'utf8'), "A='1'\nB='secret-value'\n");
+});
+
+test('single-quotes values so $, backticks, " and " #" survive, and refuses a single quote', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'envlib-'));
+  const file = join(dir, 'q.env');
+  const value = 'a$b${C}`d`"e" #f';
+  writeEnvFile(file, { V: value });
+  assert.equal(readEnvFile(file).V, value);
+  assert.throws(() => writeEnvFile(file, { V: "it's" }), (error) => /single quote/.test(error.message) && !error.message.includes("it's"));
 });
 
 test('refuses newlines and bad keys', () => {
@@ -37,4 +46,11 @@ test('rewrites the database host for containers and back, keeping credentials', 
   assert.equal(inContainer, 'postgresql://lq_tts_web:p%40ss%2Fw0rd@host.internal:5432/lq_tts');
   assert.equal(toHostDatabaseUrl(inContainer), url);
   assert.equal(toContainerDatabaseUrl('postgresql://u:p@localhost:5432/lq_tts'), 'postgresql://u:p@host.internal:5432/lq_tts');
+});
+
+test('URL conversion errors never carry the URL', () => {
+  const bad = 'postgresql://u:hunter2-secret@[bad host/db';
+  for (const convert of [toContainerDatabaseUrl, toHostDatabaseUrl]) {
+    assert.throws(() => convert(bad), (error) => error.message === 'not a valid URL (value hidden)' && !JSON.stringify(error).includes('hunter2') && !String(error.stack).includes('hunter2'));
+  }
 });

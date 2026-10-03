@@ -24,12 +24,18 @@ export function readEnvFile(path) {
   return existsSync(path) ? parseEnvText(readFileSync(path, 'utf8')) : {};
 }
 
+/**
+ * Values are written single-quoted, so compose's env_file reader takes them literally
+ * (no `$` interpolation, no ` #` comments). A single quote can't be escaped there, so it is refused.
+ * Errors name the key only, never the value.
+ */
 export function serializeEnv(obj) {
   return `${Object.entries(obj).map(([key, value]) => {
     if (!KEY.test(key)) throw new Error(`bad key ${key}`);
     const text = String(value);
     if (/[\r\n]/.test(text)) throw new Error(`value for ${key} contains a newline`);
-    return `${key}=${text}`;
+    if (text.includes("'")) throw new Error(`value for ${key} contains a single quote (not supported in env files)`);
+    return `${key}='${text}'`;
   }).join('\n')}\n`;
 }
 
@@ -61,16 +67,25 @@ export function parsePairs(raw) {
 
 const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]']);
 
+/** `new URL()` errors carry the input (password included), so replace them with a value-free one. */
+function parseUrl(url) {
+  try {
+    return new URL(url);
+  } catch {
+    throw new Error('not a valid URL (value hidden)');
+  }
+}
+
 /** Containers reach the host's Postgres through OrbStack's host.internal. */
 export function toContainerDatabaseUrl(url) {
-  const u = new URL(url);
+  const u = parseUrl(url);
   if (LOOPBACK.has(u.hostname)) u.hostname = 'host.internal';
   return u.toString();
 }
 
 /** host.internal does not resolve on the macOS host itself. */
 export function toHostDatabaseUrl(url) {
-  const u = new URL(url);
+  const u = parseUrl(url);
   if (u.hostname === 'host.internal') u.hostname = '127.0.0.1';
   return u.toString();
 }

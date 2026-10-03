@@ -1,18 +1,19 @@
 # syntax=docker/dockerfile:1
+ARG NODE_IMAGE=node:26.10.0-bookworm-slim@sha256:662933cf47f013bc8e4beb31a6116448427a82057ba7c42c97e4c5ba766504c2
 
-FROM node:26.10.0-bookworm-slim AS client
+FROM ${NODE_IMAGE} AS client
 WORKDIR /app/client
 COPY client/package.json client/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY client/ ./
 RUN npm run build
 
-FROM node:26.10.0-bookworm-slim AS server-deps
+FROM ${NODE_IMAGE} AS server-deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund
 
-FROM node:26.10.0-bookworm-slim
+FROM ${NODE_IMAGE}
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=8080
 WORKDIR /app
 COPY --from=server-deps /app/node_modules ./node_modules
