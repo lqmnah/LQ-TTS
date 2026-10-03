@@ -83,6 +83,7 @@ export default {
   'tts.text_too_long': 'Naskah maksimal 20.000 karakter. Pendekkan atau bagi menjadi beberapa voiceover.',
   'tts.voice': 'Suara',
   'tts.voice_create': 'Kloning suara',
+  'tts.voice_gone': 'Suara ini sudah tidak tersedia. Pilih suara lain.',
   'tts.empty_voices_title': 'Kloning suara dulu',
   'tts.empty_voices_body': 'Unggah rekaman berisi minimal 10 detik ucapan yang jernih. Setelah siap, suaranya muncul di sini.',
   'tts.settings': 'Pengaturan',

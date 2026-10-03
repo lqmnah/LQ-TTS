@@ -83,6 +83,7 @@ export default {
   'tts.text_too_long': 'Scripts are limited to 20,000 characters. Shorten it or split it into several voiceovers.',
   'tts.voice': 'Voice',
   'tts.voice_create': 'Clone a voice',
+  'tts.voice_gone': 'This voice is no longer available. Choose another voice.',
   'tts.empty_voices_title': 'Clone a voice first',
   'tts.empty_voices_body': 'Upload a recording with at least 10 seconds of clear speech. Once it is ready it shows up here.',
   'tts.settings': 'Settings',

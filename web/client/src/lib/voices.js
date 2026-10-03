@@ -17,3 +17,14 @@ export function audioFileProblem(file) {
 export function countsTowardLimit(voice) {
   return voice.status === 'processing' || voice.status === 'ready';
 }
+
+/**
+ * Composer default (spec §3): `?voice=` (if usable), then the draft's voice (if still usable), then my first ready
+ * voice, then the first ready profile. `mine` and `profiles` hold ready voices only.
+ */
+export function pickVoice({ requested, saved, mine, profiles }) {
+  const usable = (id) => Boolean(id) && (mine.some((v) => v.id === id) || profiles.some((p) => p.id === id));
+  if (usable(requested)) return requested;
+  if (usable(saved)) return saved;
+  return mine[0]?.id ?? profiles[0]?.id ?? '';
+}
