@@ -20,9 +20,16 @@ const dropSchema = () => execFileSync(PSQL, ['-d', 'lq_tts', '-v', 'ON_ERROR_STO
 const ENGINE_URL = 'http://127.0.0.1:8740';
 const engineHeaders = { Authorization: `Bearer ${base.ENGINE_TOKEN}` };
 
+// The engine's answer to the delete, or 0 when it could not be reached.
 async function deleteEngineVoice(id, label) {
-  const del = await fetch(`${ENGINE_URL}/v1/voices/${id}`, { method: 'DELETE', headers: engineHeaders });
-  process.stdout.write(`e2e cleanup: ${label} ${id} -> ${del.status}\n`);
+  let status = 0;
+  try {
+    status = (await fetch(`${ENGINE_URL}/v1/voices/${id}`, { method: 'DELETE', headers: engineHeaders })).status;
+  } catch {
+    // engine unreachable: the voice stays recorded for the next run
+  }
+  process.stdout.write(`e2e cleanup: ${label} ${id} -> ${status || 'unreachable'}\n`);
+  return status;
 }
 
 // The engine is shared: voices of the fake users (and their jobs, engine cascade) never outlive a run.
@@ -44,8 +51,13 @@ function profileVoiceIds() {
     return []; // no schema or table yet
   }
 }
+// The recorded profile voices that are still on the engine (any answer other than 204 or 404).
 async function purgeProfileVoices() {
-  for (const id of profileVoiceIds()) await deleteEngineVoice(id, 'profile voice');
+  const kept = [];
+  for (const id of profileVoiceIds()) {
+    if (![204, 404].includes(await deleteEngineVoice(id, 'profile voice'))) kept.push(id);
+  }
+  return kept;
 }
 
 const env = {
@@ -64,37 +76,90 @@ const env = {
   CLIENT_DIST: fileURLToPath(new URL('../../client/dist', import.meta.url)),
 };
 
+// One child at a time (the CLI, then the server). A signal is forwarded to it exactly once; with no child running,
+// the run stops at the next step. Both children are detached: Playwright signals the whole process group, and the
+// server must get exactly one SIGTERM (ours), since a second one during shutdown forces exit 1 (shutdown_forced).
+let current = null;
+let currentSignalled = false;
+let stopSignal = null;
+function signalCurrent(signal) {
+  if (!current || currentSignalled) return;
+  currentSignalled = true;
+  current.kill(signal);
+}
+function startChild(args, stdio) {
+  current = spawn(process.execPath, args, { cwd: webDir, env, stdio, detached: true });
+  currentSignalled = false;
+  return current;
+}
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.on(signal, () => {
+    if (stopSignal) return;
+    stopSignal = signal;
+    signalCurrent(signal);
+  });
+}
+const signalExitCode = (signal) => (signal === 'SIGINT' ? 130 : 143);
+
+// The CLI waits up to 15 min for the voice; this harness gives it 6, below the 7 min Playwright webServer timeout
+// in target.mjs, so a stuck seed ends with the CLI's own SIGTERM discard instead of a Playwright kill.
+const SEED_TIMEOUT_MS = 360_000;
+
 // The same CLI and metadata the release runs in the container, fed the short fixture clip on stdin.
+// Answers the exit code to run with, or null when the profile is seeded.
 async function seedProfile() {
   const audio = openSync(SAMPLE_AUDIO, 'r');
   try {
-    const cli = spawn(process.execPath, ['server/cli/profile-add.js', '--meta', 'server/cli/profiles/pandji.json', '--filename', 'ref.wav'], {
-      cwd: webDir, env, stdio: [audio, 'inherit', 'inherit'],
-    });
-    const code = await new Promise((resolve) => cli.on('exit', resolve));
-    if (code !== 0) throw new Error(`profile-add exited ${code}`);
+    const cli = startChild(['server/cli/profile-add.js', '--meta', 'server/cli/profiles/pandji.json', '--filename', 'ref.wav'], [audio, 'inherit', 'inherit']);
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = !currentSignalled;
+      signalCurrent('SIGTERM'); // the CLI deletes its new voice and exits
+    }, SEED_TIMEOUT_MS);
+    const code = await new Promise((resolve) => cli.on('exit', (exitCode) => resolve(exitCode ?? 1)));
+    clearTimeout(timer);
+    current = null;
+    if (code === 0) return null;
+    process.stderr.write(`e2e seed: profile-add exited ${code}${timedOut ? ` after the ${SEED_TIMEOUT_MS / 1000} s seed limit` : ''}\n`);
+    return stopSignal && !timedOut ? signalExitCode(stopSignal) : 1;
   } finally {
     closeSync(audio);
   }
 }
 
-await purgeProfileVoices(); // leftovers of a run that died before its cleanup
+// The schema is throwaway, but it is the only record of the profile voices: it is dropped only once each of them
+// is confirmed gone from the engine (204 or 404). Otherwise it stays for the next run and the run fails.
+async function cleanupAndExit(code) {
+  const kept = await purgeProfileVoices();
+  let exitCode = code;
+  try {
+    await purgeEngineVoices();
+  } catch (error) {
+    process.stderr.write(`e2e cleanup: ${error.message}\n`);
+    exitCode = exitCode || 1;
+  }
+  if (kept.length) {
+    process.stderr.write(`e2e cleanup: schema ${SCHEMA} kept, profile voices still on the engine: ${kept.join(' ')}\n`);
+    process.exit(exitCode || 1);
+  }
+  dropSchema();
+  process.exit(exitCode);
+}
+
+const leftovers = await purgeProfileVoices(); // of a run that died before its cleanup
+if (leftovers.length) {
+  process.stderr.write(`e2e setup: schema ${SCHEMA} kept, leftover profile voices still on the engine: ${leftovers.join(' ')}\n`);
+  process.exit(1);
+}
 dropSchema();
 await purgeEngineVoices();
-await seedProfile();
+if (stopSignal) await cleanupAndExit(signalExitCode(stopSignal));
+const seedFailure = await seedProfile();
+if (seedFailure !== null) await cleanupAndExit(seedFailure);
+if (stopSignal) await cleanupAndExit(signalExitCode(stopSignal));
 
-// detached: Playwright signals the whole process group; the server must get exactly one SIGTERM (ours), since a
-// second one during shutdown forces exit 1 (shutdown_forced).
-const child = spawn(process.execPath, ['server/index.js'], { cwd: webDir, env, stdio: 'inherit', detached: true });
-for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => child.kill(signal));
-// The schema is throwaway: drop it again once the server is gone, after its profile voice left the engine.
-child.on('exit', async (code, signal) => {
+startChild(['server/index.js'], 'inherit').on('exit', async (code, signal) => {
   process.stderr.write(`e2e server exited code=${code} signal=${signal}\n`);
-  try {
-    await purgeProfileVoices();
-    await purgeEngineVoices();
-  } finally {
-    dropSchema();
-    process.exit(code ?? 0);
-  }
+  // A clean stop is exit 0, or death by the very signal we forwarded; anything else is a failure.
+  await cleanupAndExit(code ?? (signal && signal === stopSignal ? 0 : 1));
 });
