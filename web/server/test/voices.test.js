@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import http from 'node:http';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { WAV_BYTES } from './fakes/fake-engine.js';
 import { USERS, binary, startHarness } from './helpers.js';
@@ -131,5 +132,95 @@ describe('voice upload size limit', () => {
     expect(res.status).toBe(413);
     expect(res.body.error).toEqual({ code: 'too_large', message: 'upload exceeds 1 MB' });
     expect(h.engine.state.voices.size).toBe(0);
+  });
+});
+
+describe('voice upload concurrency and client aborts', () => {
+  let h;
+  beforeAll(async () => {
+    h = await startHarness();
+  });
+  afterAll(async () => {
+    await h.close();
+  });
+  const leases = async () => (await h.pool.query('SELECT user_id FROM upload_leases')).rows;
+  async function until(check, ms = 1000) {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+      if (await check()) return true;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    return check();
+  }
+
+  it('lets only one upload per user run, so two at once cannot pass the plan limit', async () => {
+    const ana = h.as(await h.login(USERS.ana));
+    h.engine.addVoice({ owner_ref: 'ana' });
+    h.engine.addVoice({ owner_ref: 'ana' });
+    let open;
+    h.engine.state.voiceGate = new Promise((resolve) => {
+      open = resolve;
+    });
+    const settled = [];
+    const both = [upload(ana), upload(ana)].map((r) => new Promise((resolve, reject) => {
+      r.then((res) => {
+        settled.push(res);
+        resolve(res);
+      }, reject);
+    }));
+    await until(() => h.engine.state.heldUploads === 2 || settled.length > 0, 3000);
+    h.engine.state.voiceGate = null;
+    open();
+    const statuses = (await Promise.all(both)).map((r) => r.status).sort();
+    expect(statuses).toEqual([202, 409]);
+    const busy = (await Promise.all(both)).find((r) => r.status === 409);
+    expect(busy.body.error).toEqual({ code: 'voice_not_ready', message: 'another voice upload is still in progress' });
+    expect([...h.engine.state.voices.values()].filter((v) => v.owner_ref === 'ana')).toHaveLength(3);
+    expect(await leases()).toEqual([]);
+  });
+
+  it('releases the lease after an engine error', async () => {
+    const budi = h.as(await h.login(USERS.budi));
+    h.engine.state.failNext.set('POST /v1/voices', { status: 503, code: 'model_loading' });
+    expect((await upload(budi)).status).toBe(503);
+    expect(await leases()).toEqual([]);
+    expect((await upload(budi)).status).toBe(202);
+  });
+
+  it('ignores an expired lease left by another request', async () => {
+    const budi = h.as(await h.login(USERS.budi));
+    await h.pool.query(
+      "INSERT INTO upload_leases (user_id, token, until) VALUES ('budi', $1, now() - interval '1 minute')",
+      [crypto.randomUUID()],
+    );
+    expect((await upload(budi)).status).toBe(202);
+    expect(await leases()).toEqual([]);
+  });
+
+  it('aborts the engine upload and releases the lease when the browser goes away', async () => {
+    const cookie = await h.login(USERS.budi);
+    const server = h.app.listen(0, '127.0.0.1');
+    await new Promise((resolve) => server.once('listening', resolve));
+    const voicesBefore = h.engine.state.voices.size;
+    const boundary = 'abort-test-boundary';
+    const req = http.request({
+      host: '127.0.0.1', port: server.address().port, path: '/api/voices', method: 'POST',
+      headers: { cookie, 'x-requested-with': 'lq-tts', 'content-type': `multipart/form-data; boundary=${boundary}` },
+    });
+    req.on('error', () => {});
+    const field = (name, value) => `--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`;
+    req.write(field('name', 'Abort') + field('consent', 'true')
+      + `--${boundary}\r\nContent-Disposition: form-data; name="audio"; filename="a.wav"\r\nContent-Type: audio/wav\r\n\r\n`);
+    req.write(crypto.randomBytes(2 * 1024 * 1024));
+    expect(await until(() => h.engine.state.openUploads === 1, 3000)).toBe(true);
+    req.destroy();
+    try {
+      expect(await until(() => h.engine.state.openUploads === 0)).toBe(true);
+      expect(await until(async () => (await leases()).length === 0)).toBe(true);
+      expect(h.engine.state.voices.size).toBe(voicesBefore);
+    } finally {
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+    }
   });
 });

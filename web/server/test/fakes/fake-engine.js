@@ -31,6 +31,10 @@ export async function startFakeEngine({ port = 0, token } = {}) {
     healthStatus: 200,
     events: new Map(),
     fileBytes: Buffer.from('0123456789abcdefghij'),
+    // Voice uploads whose request socket is still open, and an optional barrier every finished upload waits on.
+    openUploads: 0,
+    heldUploads: 0,
+    voiceGate: null,
     callsTo(method, route) {
       return this.calls.filter((c) => c.method === method && c.route === route);
     },
@@ -83,6 +87,10 @@ export async function startFakeEngine({ port = 0, token } = {}) {
   }
 
   function receiveVoice(req, res, call) {
+    state.openUploads += 1;
+    req.on('close', () => {
+      state.openUploads -= 1;
+    });
     return new Promise((resolve) => {
       const bb = busboy({ headers: req.headers });
       const fields = {};
@@ -105,7 +113,12 @@ export async function startFakeEngine({ port = 0, token } = {}) {
         res.destroy();
         resolve();
       });
-      bb.on('close', () => {
+      bb.on('close', async () => {
+        if (state.voiceGate) {
+          state.heldUploads += 1;
+          await state.voiceGate;
+          state.heldUploads -= 1;
+        }
         call.body = { fields, file };
         if (!fields.name || !fields.owner_ref || !file) {
           fail(res, 400, 'invalid_request', 'name, owner_ref and audio are required');

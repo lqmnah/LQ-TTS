@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import busboy from 'busboy';
 import express from 'express';
@@ -15,7 +16,8 @@ export const toVoice = (v) => ({
   refSeconds: v.ref_seconds, createdAt: v.created_at, previewUrl: v.preview_url ? `/api/voices/${v.id}/preview` : null,
 });
 
-// Parses the multipart body; onFile(fields, fileStream, info) sees the fields that came before the file.
+// Parses the multipart body; onFile(fields, fileStream, info, signal) sees the fields that came before the file.
+// The signal passed to onFile aborts when the browser goes away before the body is complete.
 function receiveUpload(req, { maxBytes, onFile }) {
   return new Promise((resolve, reject) => {
     let bb;
@@ -27,6 +29,15 @@ function receiveUpload(req, { maxBytes, onFile }) {
     }
     const fields = {};
     let work = null;
+    const controller = new AbortController();
+    // A pipe never ends busboy when its source is destroyed, so a dropped client would leave this pending forever.
+    req.on('close', () => {
+      if (req.complete) return;
+      controller.abort();
+      req.unpipe(bb);
+      bb.destroy();
+      reject(new ApiError('invalid_request', 'the upload was interrupted'));
+    });
     bb.on('field', (name, value) => {
       fields[name] = value;
     });
@@ -35,7 +46,7 @@ function receiveUpload(req, { maxBytes, onFile }) {
         file.resume();
         return;
       }
-      work = onFile(fields, file, info).catch((err) => {
+      work = onFile(fields, file, info, controller.signal).catch((err) => {
         file.resume(); // drain the rest so the request can finish
         throw err;
       });
@@ -56,8 +67,28 @@ function receiveUpload(req, { maxBytes, onFile }) {
 }
 
 export function voicesRouter(ctx) {
-  const { config, engine, accounts, pool, jobsRepo, charges } = ctx;
+  const { config, engine, accounts, pool, jobsRepo, charges, log } = ctx;
   const router = express.Router();
+
+  // One upload per user at a time, so two parallel uploads cannot both pass the plan-limit check. A lease row
+  // rather than a lock keeps no pooled connection pinned during a long upload, and it expires after a crash.
+  async function withUploadLease(userId, work) {
+    const token = randomUUID();
+    const { rowCount } = await pool.query(
+      `INSERT INTO upload_leases (user_id, token, until) VALUES ($1, $2, now() + interval '30 minutes')
+       ON CONFLICT (user_id) DO UPDATE SET token = EXCLUDED.token, until = EXCLUDED.until
+       WHERE upload_leases.until < now() RETURNING token`,
+      [userId, token],
+    );
+    if (rowCount === 0) throw new ApiError('voice_not_ready', 'another voice upload is still in progress', { status: 409 });
+    try {
+      return await work();
+    } finally {
+      // Matching the token: a request whose lease expired never clears its successor's.
+      await pool.query('DELETE FROM upload_leases WHERE user_id = $1 AND token = $2', [userId, token])
+        .catch((err) => log.warn({ event: 'upload_lease_release_failed', userId, err: err.message }, 'could not release upload lease'));
+    }
+  }
 
   router.get('/voices', async (req, res) => {
     let voices;
@@ -80,7 +111,7 @@ export function voicesRouter(ctx) {
     const ip = clientIp(req);
     const created = await receiveUpload(req, {
       maxBytes: config.maxUploadBytes,
-      onFile: async (fields, file, { filename, mimeType }) => {
+      onFile: async (fields, file, { filename, mimeType }, signal) => {
         if (fields.consent !== 'true') throw new ApiError('consent_required', 'consent is required to clone a voice');
         const name = (fields.name ?? '').trim();
         if (!name || name.length > 80) throw new ApiError('invalid_request', 'name is required (at most 80 characters)');
@@ -92,16 +123,18 @@ export function voicesRouter(ctx) {
           throw new ApiError('unsupported_audio', 'use MP3, WAV, M4A or FLAC');
         }
         const session = await accounts.fresh(req.session);
-        const count = await accounts.voiceCount(userId);
-        if (count === null) throw new ApiError('engine_unavailable', 'the voice engine is unavailable, please try again');
-        const limit = accounts.voiceLimit(session.paid);
-        if (count >= limit) throw new ApiError('voice_limit_reached', `your plan keeps at most ${limit} voices`);
-        try {
-          return await engine.uploadVoice({ fields: { name, owner_ref: userId, language, transcript }, filename, mimeType, file });
-        } catch (err) {
-          if (file.truncated) throw new ApiError('too_large', `upload exceeds ${Math.floor(config.maxUploadBytes / 1048576)} MB`);
-          throw engineError(err);
-        }
+        return withUploadLease(userId, async () => {
+          const count = await accounts.voiceCount(userId);
+          if (count === null) throw new ApiError('engine_unavailable', 'the voice engine is unavailable, please try again');
+          const limit = accounts.voiceLimit(session.paid);
+          if (count >= limit) throw new ApiError('voice_limit_reached', `your plan keeps at most ${limit} voices`);
+          try {
+            return await engine.uploadVoice({ fields: { name, owner_ref: userId, language, transcript }, filename, mimeType, file, signal });
+          } catch (err) {
+            if (file.truncated) throw new ApiError('too_large', `upload exceeds ${Math.floor(config.maxUploadBytes / 1048576)} MB`);
+            throw engineError(err);
+          }
+        });
       },
     });
     try {
