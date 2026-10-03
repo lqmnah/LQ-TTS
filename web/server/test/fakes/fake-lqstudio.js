@@ -14,16 +14,17 @@ async function readJson(req) {
 // In-memory stand-in for LQ-Studio's /api/internal/tts/* (contract C1), incl. the guard's behaviour.
 export async function startFakeLqStudio({ port = 0, token, users = [] } = {}) {
   const state = {
-    users: new Map(users.map((u) => [String(u.id), { ...u }])),
+    users: new Map(users.map((u) => [String(u.id), { tv: 0, ...u }])),
     ledger: [],
     settled: new Set(),
     refunded: new Set(),
     calls: [],
     down: false,
-    rateLimited: false,
+    rateLimited: false, // the login backoff: 429 with retryAfter
+    guardRateLimited: false, // the internal-route guard's own limit: 429 without retryAfter
     failNext: new Map(),
     challenges: new Map(),
-    holds: new Map(), // ref → { userId, charged, balance } as first answered (replays return it unchanged)
+    holds: new Map(), // ref → { userId, charged } as first answered (replays answer the current balance)
     net(ref) {
       return this.ledger.filter((l) => l.ref === ref).reduce((sum, l) => sum + (l.type === 'deduct' ? l.amount : -l.amount), 0);
     },
@@ -31,7 +32,9 @@ export async function startFakeLqStudio({ port = 0, token, users = [] } = {}) {
       return this.calls.filter((c) => c.path === path);
     },
   };
-  const pub = (u) => ({ id: u.id, name: u.name, email: u.email, plan: u.plan, paid: u.paid });
+  const pub = (u) => ({ id: u.id, name: u.name, email: u.email, plan: u.plan, paid: u.paid, tv: u.tv });
+  // Like the door's zod schema, which runs before the service.
+  const invalidAmount = (res) => json(res, 400, { error: 'Jumlah tidak valid', code: 'validation', field: 'amount' });
   const byIdentifier = (identifier) => {
     const id = String(identifier ?? '').toLowerCase();
     return [...state.users.values()].find((u) => u.email.toLowerCase() === id || u.username.toLowerCase() === id);
@@ -50,6 +53,7 @@ export async function startFakeLqStudio({ port = 0, token, users = [] } = {}) {
       state.calls.push({ method: req.method, path, body, headers: req.headers });
       if (req.headers['cf-connecting-ip'] || req.headers['cf-ray']) return json(res, 403, { ok: false, error: 'internal_route_not_public' });
       if (req.headers.authorization !== `Bearer ${token}`) return json(res, 401, { ok: false, error: 'unauthorized' });
+      if (state.guardRateLimited) return json(res, 429, { ok: false, error: 'rate_limited' });
       if (state.down) return json(res, 503, { error: 'unavailable' });
       const key = `${req.method} ${path.startsWith('/users/') ? '/users/:id' : path}`;
       const left = state.failNext.get(key) ?? 0;
@@ -87,26 +91,23 @@ export async function startFakeLqStudio({ port = 0, token, users = [] } = {}) {
         return json(res, 200, { ...pub(u), balance: u.balance, suspended: u.suspended, verified: u.verified });
       }
       if (req.method === 'POST' && path === '/credits/hold') {
-        if (!Number.isSafeInteger(body.amount) || body.amount <= 0) {
-          return json(res, 400, { error: 'invalid_request', message: 'amount must be a positive integer' });
-        }
+        if (!Number.isSafeInteger(body.amount) || body.amount <= 0) return invalidAmount(res);
         const u = state.users.get(String(body.userId));
         if (!u) return json(res, 404, { error: 'not_found' });
+        if (u.suspended) return json(res, 403, { error: 'suspended' });
         const prior = state.holds.get(body.ref);
         if (prior && prior.userId !== u.id) return json(res, 409, { error: 'ref_conflict' });
         // A settled or refunded hold is terminal: its ref never takes credits again.
         if (prior && (state.settled.has(body.ref) || state.refunded.has(body.ref))) return json(res, 409, { error: 'ref_conflict' });
-        if (prior) return json(res, 200, { holdId: body.ref, charged: prior.charged, balance: prior.balance });
+        if (prior) return json(res, 200, { holdId: body.ref, charged: prior.charged, balance: u.balance });
         if (u.balance < body.amount) return json(res, 402, { error: 'insufficient_credits', balance: u.balance });
         u.balance -= body.amount;
         state.ledger.push({ ref: body.ref, userId: u.id, type: 'deduct', amount: body.amount });
-        state.holds.set(body.ref, { userId: u.id, charged: body.amount, balance: u.balance });
+        state.holds.set(body.ref, { userId: u.id, charged: body.amount });
         return json(res, 200, { holdId: body.ref, charged: body.amount, balance: u.balance });
       }
       if (req.method === 'POST' && (path === '/credits/settle' || path === '/credits/refund')) {
-        if (path === '/credits/settle' && (!Number.isSafeInteger(body.amount) || body.amount < 0)) {
-          return json(res, 400, { error: 'invalid_request', message: 'amount must be a non-negative integer' });
-        }
+        if (path === '/credits/settle' && (!Number.isSafeInteger(body.amount) || body.amount < 0)) return invalidAmount(res);
         const u = state.users.get(String(body.userId));
         if (!u || !hasHold(u.id, body.holdId)) return json(res, 404, { error: 'not_found' });
         if (path === '/credits/settle') {
@@ -141,6 +142,9 @@ export async function startFakeLqStudio({ port = 0, token, users = [] } = {}) {
   return {
     url: `http://127.0.0.1:${server.address().port}`,
     state,
+    bumpTv(id) {
+      state.users.get(String(id)).tv += 1;
+    },
     close: () => new Promise((resolve) => {
       server.closeAllConnections();
       server.close(() => resolve());

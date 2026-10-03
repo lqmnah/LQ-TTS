@@ -160,3 +160,11 @@ The end-user IP comes from `CF-Connecting-IP` (set by the Cloudflare tunnel) and
 5. **C2 additions:** `internal_error` (500); missing CSRF header → `403 invalid_request`; cancel → `202 {status:"cancel_requested"}`; `/api/health` adds `signupUrl` (LQ-Studio `/signup`); relayed engine bodies send `Cache-Control: no-store`; `Me.voiceCount` may be `null` when the engine is unreachable.
 6. **Engine callers:** staging web uses engine caller `lq-tts-stg`, prod uses `lq-tts`.
 7. **Branch:** web work happens on `feat/web-app`, created in place from `feat/voice-engine` (the live engine runs from this checkout).
+
+## Amendment C (2026-10-03, LQ-Studio commit dd9ed881)
+1. **`tv` (tokenVersion).** The user object from `POST auth/verify`, `POST auth/verify-2fa` (`user`) and `GET users/:id` carries `tv`: a safe integer, LQ-Studio's `tokenVersion`, 0 when unset; LQ-Studio bumps it on a password change or "log out everywhere". The web stores it per session (`sessions.user_tv`, migration 005; a missing or non-safe-integer `tv` counts as 0). When the ≤ 5 min `/api/me` refresh sees a `tv` different from the session's, every session of that user whose `user_tv` differs from the new value is revoked and the request answers `401 unauthorized`; sessions opened after the bump keep working. While LQ-Studio is down the cached copy is still served.
+2. **Suspended holds.** `POST credits/hold` for a suspended user → `403 {error:"suspended"}`, no money moves; settle and refund stay open. The web treats it as an unknown outcome (a replayed hold may have landed before the suspension): it refunds the ref at once (a 404 there leaves the charge for reconciliation), revokes every session of the user and answers `403 suspended`.
+3. **Contract corrections** (the real door, found by the 2A final review):
+   - An invalid `amount` (hold or settle) is rejected by zod before the service: `400 {error:<localized prose>, code:"validation", field:"amount"}`, not `invalid_request`.
+   - A hold replay answers the CURRENT balance, not the balance at the first hold.
+   - The guard's own rate limit answers `429 {ok:false, error:"rate_limited"}` with no `retryAfter` and no `Retry-After` header; the web then answers `429 rate_limited` with its default `Retry-After: 60`. Only the login backoff carries `retryAfter`.

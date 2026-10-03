@@ -3,6 +3,9 @@ import crypto from 'node:crypto';
 export const SESSION_DAYS = 30;
 const SLIDE_AFTER_MS = 3600 * 1000;
 
+// LQ-Studio's tokenVersion; anything that is not a safe integer counts as 0, its "unset" value.
+export const userTv = (user) => (Number.isSafeInteger(user?.tv) ? user.tv : 0);
+
 export const hashSessionId = (raw) => crypto.createHash('sha256').update(raw).digest('hex');
 
 export function createSessionStore(pool) {
@@ -14,10 +17,10 @@ export function createSessionStore(pool) {
         'SELECT lang FROM sessions WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1', [userId],
       );
       const { rows: [session] } = await pool.query(
-        `INSERT INTO sessions (id, user_id, name, email, plan, paid, lang, balance, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now() + make_interval(days => $9)) RETURNING *`,
+        `INSERT INTO sessions (id, user_id, name, email, plan, paid, lang, balance, user_tv, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now() + make_interval(days => $10)) RETURNING *`,
         [hashSessionId(raw), userId, user.name ?? '', user.email ?? '', user.plan ?? 'free', Boolean(user.paid),
-          prev?.lang ?? 'id', balance ?? null, SESSION_DAYS],
+          prev?.lang ?? 'id', balance ?? null, userTv(user), SESSION_DAYS],
       );
       return { raw, session };
     },
@@ -40,6 +43,12 @@ export function createSessionStore(pool) {
     },
     async revokeUser(userId) {
       await pool.query('UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL', [String(userId)]);
+    },
+    // Ends the sessions opened before LQ-Studio's tokenVersion moved to tv; sessions opened at tv keep working.
+    async revokeOtherTv(userId, tv) {
+      await pool.query(
+        'UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND user_tv <> $2 AND revoked_at IS NULL', [String(userId), tv],
+      );
     },
     async refresh(sessionId, user) {
       const { rows } = await pool.query(

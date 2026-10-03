@@ -132,7 +132,9 @@ export function createCharges({ pool, lqstudio, sessions, log }) {
         }
         throw lqError(err);
       }
+      // Outcome unknown. That includes 403 suspended: a replay of this ref may have landed before the suspension.
       await releaseUnknownHold(charge);
+      if (err instanceof UpstreamError && err.code === 'suspended') await sessions.revokeUser(charge.user_id);
       throw lqError(err);
     }
     if (typeof out?.balance === 'number') await sessions.setBalance(charge.user_id, out.balance);

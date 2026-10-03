@@ -60,7 +60,10 @@ describe('upstream clients', () => {
     const ref = `tts:${crypto.randomUUID()}:r1`;
     const first = await lqClient.hold({ userId: 'u1', amount: 10, ref });
     expect(first).toEqual({ holdId: ref, charged: 10, balance: 90 });
-    expect(await lqClient.hold({ userId: 'u1', amount: 25, ref })).toEqual(first);
+    // A replay takes nothing more and answers the CURRENT balance, like the real door.
+    lq.state.users.get('u1').balance -= 5;
+    expect(await lqClient.hold({ userId: 'u1', amount: 25, ref })).toEqual({ ...first, balance: 85 });
+    lq.state.users.get('u1').balance += 5;
     expect(lq.state.net(ref)).toBe(10);
     await expect(lqClient.hold({ userId: 'u2', amount: 1, ref }))
       .rejects.toMatchObject({ name: 'UpstreamError', status: 409, code: 'ref_conflict' });
@@ -105,14 +108,14 @@ describe('upstream clients', () => {
     const balance = lq.state.users.get('u1').balance;
     for (const amount of [0, -1, 1.5, '3', null, undefined, 2 ** 53]) {
       await expect(lqClient.hold({ userId: 'u1', amount, ref: `tts:${crypto.randomUUID()}:r1` }))
-        .rejects.toMatchObject({ name: 'UpstreamError', status: 400, code: 'invalid_request' });
+        .rejects.toMatchObject({ name: 'UpstreamError', status: 400, code: 'validation', body: { error: 'Jumlah tidak valid', code: 'validation', field: 'amount' } });
     }
     expect(lq.state.users.get('u1').balance).toBe(balance);
     const ref = `tts:${crypto.randomUUID()}:r1`;
     await lqClient.hold({ userId: 'u1', amount: 2, ref });
     for (const amount of [-1, 0.5, '1', null, undefined]) {
       await expect(lqClient.settle({ userId: 'u1', holdId: ref, amount }))
-        .rejects.toMatchObject({ name: 'UpstreamError', status: 400, code: 'invalid_request' });
+        .rejects.toMatchObject({ name: 'UpstreamError', status: 400, code: 'validation', body: { field: 'amount' } });
     }
     expect(await lqClient.settle({ userId: 'u1', holdId: ref, amount: 0 })).toEqual({ balance });
     expect(lq.state.net(ref)).toBe(0);
@@ -151,6 +154,46 @@ describe('upstream clients', () => {
   it('ledger outages surface as unavailable', async () => {
     lq.state.failNext.set('POST /credits/hold', 1);
     await expect(lqClient.hold({ userId: 'u1', amount: 1, ref: `tts:${crypto.randomUUID()}:r1` })).rejects.toMatchObject({ name: 'UpstreamUnavailable', status: 503 });
+  });
+
+  it('every user object carries tv, and bumpTv raises it', async () => {
+    expect(await lqClient.getUser('u1')).toMatchObject({ id: 'u1', tv: 0 });
+    expect((await lqClient.verify({ identifier: 'ana', password: 'pw', ip: '1.2.3.4' })).user).toMatchObject({ id: 'u1', tv: 0 });
+    const { challenge } = await lqClient.verify({ identifier: 'budi', password: 'pw', ip: '1.2.3.4' });
+    expect((await lqClient.verify2fa({ challenge, code: '123456', ip: '1.2.3.4' })).user).toMatchObject({ id: 'u2', tv: 0 });
+    lq.bumpTv('u1');
+    try {
+      expect(await lqClient.getUser('u1')).toMatchObject({ tv: 1 });
+    } finally {
+      lq.state.users.get('u1').tv = 0;
+    }
+  });
+
+  it('refuses a hold for a suspended user without moving credits; settle and refund stay open', async () => {
+    const ref = `tts:${crypto.randomUUID()}:r1`;
+    await lqClient.hold({ userId: 'u1', amount: 2, ref });
+    const u1 = lq.state.users.get('u1');
+    const balance = u1.balance;
+    u1.suspended = true;
+    try {
+      await expect(lqClient.hold({ userId: 'u1', amount: 2, ref: `tts:${crypto.randomUUID()}:r1` }))
+        .rejects.toMatchObject({ name: 'UpstreamError', status: 403, code: 'suspended' });
+      expect(u1.balance).toBe(balance);
+      expect(await lqClient.refund({ userId: 'u1', holdId: ref })).toEqual({ balance: balance + 2, refunded: 2 });
+    } finally {
+      u1.suspended = false;
+    }
+  });
+
+  it('the guard rate limit answers 429 without retryAfter', async () => {
+    lq.state.guardRateLimited = true;
+    try {
+      const err = await lqClient.getUser('u1').catch((e) => e);
+      expect(err).toMatchObject({ name: 'UpstreamError', status: 429, code: 'rate_limited', body: { ok: false, error: 'rate_limited' } });
+      expect(err.body).not.toHaveProperty('retryAfter');
+    } finally {
+      lq.state.guardRateLimited = false;
+    }
   });
 
   it('reads the error code from engine bodies', async () => {

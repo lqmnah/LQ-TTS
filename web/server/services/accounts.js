@@ -1,6 +1,7 @@
 import { UpstreamError } from '../clients/http.js';
 import { ApiError } from '../lib/errors.js';
 import { lqError } from '../lib/upstream-errors.js';
+import { userTv } from './sessions.js';
 
 export const ME_CACHE_MS = 5 * 60 * 1000;
 
@@ -32,6 +33,12 @@ export function createAccounts({ sessions, lqstudio, engine, config }) {
       throw lqError(err);
     }
     await assertActive(user, session.user_id);
+    const tv = userTv(user);
+    if (tv !== session.user_tv) {
+      // LQ-Studio bumped tokenVersion (password change, "log out everywhere"): sessions from before it end now.
+      await sessions.revokeOtherTv(session.user_id, tv);
+      throw new ApiError('unauthorized', 'please log in again');
+    }
     return (await sessions.refresh(session.id, user)) ?? session;
   }
 
