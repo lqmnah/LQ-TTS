@@ -87,10 +87,15 @@ export async function startFakeLqStudio({ port = 0, token, users = [] } = {}) {
         return json(res, 200, { ...pub(u), balance: u.balance, suspended: u.suspended, verified: u.verified });
       }
       if (req.method === 'POST' && path === '/credits/hold') {
+        if (!Number.isSafeInteger(body.amount) || body.amount <= 0) {
+          return json(res, 400, { error: 'invalid_request', message: 'amount must be a positive integer' });
+        }
         const u = state.users.get(String(body.userId));
         if (!u) return json(res, 404, { error: 'not_found' });
         const prior = state.holds.get(body.ref);
         if (prior && prior.userId !== u.id) return json(res, 409, { error: 'ref_conflict' });
+        // A settled or refunded hold is terminal: its ref never takes credits again.
+        if (prior && (state.settled.has(body.ref) || state.refunded.has(body.ref))) return json(res, 409, { error: 'ref_conflict' });
         if (prior) return json(res, 200, { holdId: body.ref, charged: prior.charged, balance: prior.balance });
         if (u.balance < body.amount) return json(res, 402, { error: 'insufficient_credits', balance: u.balance });
         u.balance -= body.amount;
@@ -99,6 +104,9 @@ export async function startFakeLqStudio({ port = 0, token, users = [] } = {}) {
         return json(res, 200, { holdId: body.ref, charged: body.amount, balance: u.balance });
       }
       if (req.method === 'POST' && (path === '/credits/settle' || path === '/credits/refund')) {
+        if (path === '/credits/settle' && (!Number.isSafeInteger(body.amount) || body.amount < 0)) {
+          return json(res, 400, { error: 'invalid_request', message: 'amount must be a non-negative integer' });
+        }
         const u = state.users.get(String(body.userId));
         if (!u || !hasHold(u.id, body.holdId)) return json(res, 404, { error: 'not_found' });
         if (path === '/credits/settle') {

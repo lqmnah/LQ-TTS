@@ -5,9 +5,22 @@ import { ApiError } from '../lib/errors.js';
 import { countChars, countSentences, creditsFor, makeTitle, rupiahFor } from '../lib/pricing.js';
 import { engineError, isEngineNotFound } from '../lib/upstream-errors.js';
 import { toSummary } from '../services/jobs-repo.js';
-import { ownJob, ownVoice, parseIdx } from '../services/ownership.js';
+import { isUuid, ownJob, ownVoice, parseIdx } from '../services/ownership.js';
 
 const FILE_NAMES = new Set(['final.mp3', 'final.wav', 'subs.srt', 'subs.vtt']);
+const CURSOR_AT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
+
+// History cursor from jobsRepo.list: "<created_at to the microsecond, UTC>|<job id>".
+function parseCursor(raw) {
+  const [at, id, extra] = String(raw).split('|');
+  const date = new Date(at);
+  // Date rolls impossible days over (Feb 30 → Mar 2) where Postgres refuses them: require a clean round trip.
+  if (extra !== undefined || !CURSOR_AT.test(at) || !isUuid(id) || Number.isNaN(date.getTime())
+    || date.toISOString().slice(0, 23) !== at.slice(0, 23)) {
+    throw new ApiError('invalid_request', 'before must be the nextBefore of a previous page');
+  }
+  return { createdAt: at, id };
+}
 
 function readText(value, max) {
   if (typeof value !== 'string') throw new ApiError('invalid_request', 'text is required');
@@ -75,13 +88,9 @@ export function jobsRouter(ctx) {
   router.get('/jobs', async (req, res) => {
     const limit = req.query.limit === undefined ? 20 : Number(req.query.limit);
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new ApiError('invalid_request', 'limit must be 1-100');
-    let before = null;
-    if (req.query.before !== undefined) {
-      before = new Date(String(req.query.before));
-      if (Number.isNaN(before.getTime())) throw new ApiError('invalid_request', 'before must be an ISO date');
-    }
+    const before = req.query.before === undefined ? null : parseCursor(req.query.before);
     const rows = await jobsRepo.list(req.session.user_id, { limit, before });
-    res.json({ items: rows.map(toSummary), nextBefore: rows.length === limit ? rows.at(-1).created_at.toISOString() : null });
+    res.json({ items: rows.map(toSummary), nextBefore: rows.length === limit ? rows.at(-1).cursor : null });
   });
 
   router.get('/jobs/:id', async (req, res) => {

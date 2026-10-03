@@ -101,6 +101,40 @@ describe('upstream clients', () => {
     expect(lq.state.net(b)).toBe(6);
   });
 
+  it('refuses hold and settle amounts that are not whole credits, before anything moves', async () => {
+    const balance = lq.state.users.get('u1').balance;
+    for (const amount of [0, -1, 1.5, '3', null, undefined, 2 ** 53]) {
+      await expect(lqClient.hold({ userId: 'u1', amount, ref: `tts:${crypto.randomUUID()}:r1` }))
+        .rejects.toMatchObject({ name: 'UpstreamError', status: 400, code: 'invalid_request' });
+    }
+    expect(lq.state.users.get('u1').balance).toBe(balance);
+    const ref = `tts:${crypto.randomUUID()}:r1`;
+    await lqClient.hold({ userId: 'u1', amount: 2, ref });
+    for (const amount of [-1, 0.5, '1', null, undefined]) {
+      await expect(lqClient.settle({ userId: 'u1', holdId: ref, amount }))
+        .rejects.toMatchObject({ name: 'UpstreamError', status: 400, code: 'invalid_request' });
+    }
+    expect(await lqClient.settle({ userId: 'u1', holdId: ref, amount: 0 })).toEqual({ balance });
+    expect(lq.state.net(ref)).toBe(0);
+  });
+
+  it('a hold on a ref that is already settled or refunded answers 409 and takes nothing', async () => {
+    const refunded = `tts:${crypto.randomUUID()}:r1`;
+    await lqClient.hold({ userId: 'u1', amount: 3, ref: refunded });
+    await lqClient.refund({ userId: 'u1', holdId: refunded });
+    const settled = `tts:${crypto.randomUUID()}:r1`;
+    await lqClient.hold({ userId: 'u1', amount: 3, ref: settled });
+    await lqClient.settle({ userId: 'u1', holdId: settled, amount: 3 });
+    const balance = lq.state.users.get('u1').balance;
+    for (const ref of [refunded, settled]) {
+      await expect(lqClient.hold({ userId: 'u1', amount: 3, ref }))
+        .rejects.toMatchObject({ name: 'UpstreamError', status: 409, code: 'ref_conflict' });
+    }
+    expect(lq.state.users.get('u1').balance).toBe(balance);
+    expect(lq.state.net(refunded)).toBe(0);
+    expect(lq.state.net(settled)).toBe(3);
+  });
+
   it('verify-2fa reports suspension before checking the code and keeps the challenge', async () => {
     const { challenge } = await lqClient.verify({ identifier: 'budi', password: 'pw', ip: '1.2.3.4' });
     lq.state.users.get('u2').suspended = true;

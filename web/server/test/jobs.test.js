@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { UpstreamUnavailable } from '../clients/http.js';
 import { WAV_BYTES } from './fakes/fake-engine.js';
@@ -92,17 +93,27 @@ describe('voiceover jobs', () => {
     expect(h.lq.state.callsTo('/credits/hold').length).toBe(holds);
   });
 
-  it('queues nothing when LQ-Studio fails during the hold, and releases the charge', async () => {
-    h.lq.state.failNext.set('POST /credits/hold', 1);
+  it('queues nothing when the hold outcome is unknown, and still gives back a hold that lands late', async () => {
+    h.lq.state.failNext.set('POST /credits/hold', 1); // the hold has not reached LQ-Studio's ledger
     const jobs = h.engine.state.jobs.size;
     const res = await ana.post('/api/jobs', { voiceId: voice.id, text: 'Halo.' });
     expect(res.status).toBe(503);
     expect(res.body.error.code).toBe('lqstudio_unavailable');
     expect(h.engine.state.jobs.size).toBe(jobs);
-    expect((await chargeByRef(lastHold().ref)).state).toBe('refunded');
+    const late = lastHold();
+    expect(h.lq.state.callsTo('/credits/refund').at(-1).body).toEqual({ userId: 'ana', holdId: late.ref });
+    // The immediate refund found nothing, which is not final yet: the charge waits for reconciliation.
+    expect(await chargeByRef(late.ref)).toMatchObject({ state: 'held', job_id: null, attempts: 0, last_error: null });
+    await h.ctx.lqstudio.hold(late); // the aborted request reaches LQ-Studio after all
+    expect(h.lq.state.users.get('ana').balance).toBe(99);
+    await h.pool.query(`UPDATE charges SET created_at = now() - interval '3 minutes' WHERE hold_id = $1`, [late.ref]);
+    expect(await h.ctx.charges.resolveOne(await chargeByRef(late.ref), null)).toBe(true);
+    expect((await chargeByRef(late.ref)).state).toBe('refunded');
+    expect(h.lq.state.net(late.ref)).toBe(0);
+    expect(h.lq.state.users.get('ana').balance).toBe(100);
   });
 
-  it('gives the credits back when LQ-Studio took them but its answer was lost', async () => {
+  it('gives the credits back at once when LQ-Studio took them but its answer was lost', async () => {
     const { hold } = h.ctx.lqstudio;
     h.ctx.lqstudio.hold = async (args) => {
       await hold(args);
@@ -129,11 +140,39 @@ describe('voiceover jobs', () => {
     for (const n of [1, 2, 3]) ids.push((await budi.post('/api/jobs', { voiceId: own.id, text: `Kalimat ${n}.` })).body.id);
     const first = await budi.get('/api/jobs?limit=2');
     expect(first.body.items.map((j) => j.id)).toEqual([ids[2], ids[1]]);
-    expect(first.body.nextBefore).toBe(first.body.items[1].createdAt);
     const second = await budi.get(`/api/jobs?limit=2&before=${encodeURIComponent(first.body.nextBefore)}`);
     expect(second.body.items.map((j) => j.id)).toEqual([ids[0]]);
     expect(second.body.nextBefore).toBeNull();
     expect((await budi.get('/api/jobs?limit=0')).status).toBe(400);
+    for (const bad of [
+      first.body.items[1].createdAt, `2026-02-30T10:00:00.000000Z|${ids[0]}`, '2026-10-03T10:00:00.000000Z|not-a-uuid', 'x',
+    ]) {
+      const res = await budi.get(`/api/jobs?before=${encodeURIComponent(bad)}`);
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe('invalid_request');
+    }
+  });
+
+  it('pages through jobs created at the same instant without skipping or repeating any', async () => {
+    const poor = h.as(await h.login(USERS.poor));
+    const ids = [crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()];
+    for (const id of ids) {
+      await h.pool.query(
+        `INSERT INTO jobs (id, user_id, voice_id, voice_name, title, chars, status, created_at)
+         VALUES ($1, 'poor', $2, 'Suara', 'Sama', 4, 'done', '2026-10-03T10:00:00.123456Z')`,
+        [id, crypto.randomUUID()],
+      );
+    }
+    const seen = [];
+    let before = null;
+    for (let page = 0; page < 5; page += 1) {
+      const res = await poor.get(`/api/jobs?limit=1${before ? `&before=${encodeURIComponent(before)}` : ''}`);
+      expect(res.status).toBe(200);
+      seen.push(...res.body.items.map((j) => j.id));
+      before = res.body.nextBefore;
+      if (!before) break;
+    }
+    expect(seen).toEqual(ids.toSorted().reverse());
   });
 
   it('shows engine progress, files and revisions of a finished job', async () => {

@@ -83,6 +83,20 @@ export function createCharges({ pool, lqstudio, sessions, log }) {
     }
   }
 
+  // Releases a hold whose outcome we never learned. "Nothing held" (404) is not final here: the request we gave up on
+  // may still reach LQ-Studio and deduct. The charge then stays held without a job, and reconciliation refunds it once
+  // it is older than HELD_MIN_AGE_MS, when a 404 is final.
+  async function releaseUnknownHold(charge) {
+    let out;
+    try {
+      out = await lqstudio.refund({ userId: charge.user_id, holdId: charge.hold_id });
+    } catch (err) {
+      if (!(err instanceof UpstreamError && err.code === 'not_found')) await recordFailure(charge, err);
+      return;
+    }
+    await finish(charge, 'refunded', out?.balance);
+  }
+
   async function hold(charge) {
     let out;
     try {
@@ -96,7 +110,7 @@ export function createCharges({ pool, lqstudio, sessions, log }) {
         }
         throw lqError(err);
       }
-      await refundNow(charge); // outcome unknown: give back whatever may have been taken
+      await releaseUnknownHold(charge);
       throw lqError(err);
     }
     if (typeof out?.balance === 'number') await sessions.setBalance(charge.user_id, out.balance);

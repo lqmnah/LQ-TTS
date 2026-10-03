@@ -35,12 +35,17 @@ export function createJobsRepo(pool) {
       const { rows: [row] } = await pool.query('SELECT * FROM jobs WHERE id = $1', [id]);
       return row ?? null;
     },
+    // Newest first, ties broken by id. `cursor` (created_at to the microsecond, UTC, plus id) resumes after a row;
+    // `before` is that cursor parsed as {createdAt, id}.
     async list(userId, { limit, before }) {
       const { rows } = await pool.query(
-        `SELECT ${WITH_CREDITS} FROM jobs j
-         WHERE j.user_id = $1 AND j.deleted_at IS NULL AND ($2::timestamptz IS NULL OR j.created_at < $2)
-         ORDER BY j.created_at DESC LIMIT $3`,
-        [userId, before, limit],
+        `SELECT ${WITH_CREDITS},
+           to_char(j.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') || '|' || j.id AS cursor
+         FROM jobs j
+         WHERE j.user_id = $1 AND j.deleted_at IS NULL
+           AND ($2::timestamptz IS NULL OR (j.created_at, j.id) < ($2::timestamptz, $3::uuid))
+         ORDER BY j.created_at DESC, j.id DESC LIMIT $4`,
+        [userId, before?.createdAt ?? null, before?.id ?? null, limit],
       );
       return rows;
     },
