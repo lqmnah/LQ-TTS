@@ -40,8 +40,8 @@ export default {
   'login.verify_cta': 'Open LQ-Studio',
   'login.required': 'Fill in this field.',
   'login.code_format': 'Codes are 6 digits, or a backup code of 8 to 16 characters.',
-  'login.reason.suspended': 'You were signed out because this account is suspended. Contact LQ-Studio support.',
-  'login.reason.needs_verification': 'You were signed out because this account needs verification. Verify your email and phone number in LQ-Studio, then sign in again.',
+  'login.reason.suspended': 'You were logged out because this account is suspended. Contact LQ-Studio support.',
+  'login.reason.needs_verification': 'You were logged out because this account needs verification. Finish verifying your email and phone on LQ-Studio, then log in again.',
 
   'error.unauthorized': 'Your session has ended. Please log in again.',
   'error.invalid_request': 'That request was not valid. Check the form and try again.',

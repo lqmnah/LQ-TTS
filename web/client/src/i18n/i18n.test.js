@@ -5,8 +5,7 @@ import en from './en.js';
 import id from './id.js';
 import { translate, translateCount } from './index.jsx';
 
-// jsdom gives import.meta.url an http scheme, so resolve from the client root vitest runs in.
-const SRC = join(process.cwd(), 'src');
+const SRC = join(import.meta.dirname, '..');
 const placeholders = (s) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort();
 
 function sourceFiles(dir) {

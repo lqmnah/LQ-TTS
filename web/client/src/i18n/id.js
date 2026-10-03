@@ -117,7 +117,7 @@ export default {
   'job.estimate': 'Perkiraan selesai dalam {time}',
   'job.live': 'Kalimat selesai satu per satu.',
   'job.cancel': 'Batalkan proses',
-  'job.cancel_busy': 'Perubahan sebelumnya masih disimpan. Coba batalkan lagi beberapa detik lagi.',
+  'job.cancel_busy': 'Perubahan sebelumnya masih diproses. Coba batalkan lagi dalam beberapa detik.',
   'job.done_notice': 'Voiceover kamu sudah jadi. Dengarkan, perbaiki kalimat yang perlu, lalu unduh.',
   'job.needs_review_one': '{count} kalimat perlu didengar ulang.',
   'job.needs_review_other': '{count} kalimat perlu didengar ulang.',
