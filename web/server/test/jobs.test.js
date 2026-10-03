@@ -181,7 +181,7 @@ describe('voiceover jobs', () => {
     h.engine.setJob(id, { status: 'done', audio_seconds: 3.5 });
     const res = await ana.get(`/api/jobs/${id}`);
     expect(res.body).toMatchObject({
-      id, status: 'done', audioSeconds: 3.5, revision: 1, credits: 1, progress: { done: 2, total: 2 }, needsReview: 0,
+      id, status: 'done', errorCode: null, audioSeconds: 3.5, revision: 1, credits: 1, progress: { done: 2, total: 2 }, needsReview: 0,
       revisions: [1], settings: { speed: 0.9 },
       files: {
         'final.mp3': `/api/jobs/${id}/files/final.mp3?revision=1`,
@@ -196,6 +196,12 @@ describe('voiceover jobs', () => {
       idx: 1, paragraphIdx: 0, text: 'Dua.', style: null, status: 'done', score: null,
       durationS: null, startS: null, endS: null, audioUrl: `/api/jobs/${id}/sentences/1/audio`,
     });
+  });
+
+  it("shows the engine's error code on a failed job", async () => {
+    const { body: { id } } = await ana.post('/api/jobs', { voiceId: voice.id, text: 'Gagal.' });
+    h.engine.setJob(id, { status: 'failed', error_code: 'tts_failed' });
+    expect((await ana.get(`/api/jobs/${id}`)).body).toMatchObject({ status: 'failed', errorCode: 'tts_failed' });
   });
 
   it('treats a job the engine no longer has as gone', async () => {

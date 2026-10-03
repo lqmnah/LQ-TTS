@@ -169,3 +169,4 @@ The end-user IP comes from `CF-Connecting-IP` (set by the Cloudflare tunnel) and
    - A hold replay answers the CURRENT balance, not the balance at the first hold.
    - The guard's own rate limit answers `429 {ok:false, error:"rate_limited"}` with no `retryAfter` and no `Retry-After` header; the web then answers `429 rate_limited` with its default `Retry-After: 60`. Only the login backoff carries `retryAfter`.
 4. **Voice delete** reads each live job's engine state before deleting the voice and resolves its charges like `DELETE /api/jobs/:id` (queued/running → canceled, finished → settled, engine 404 → refund). A job the engine cannot report on keeps its charges held for reconciliation.
+5. **C2 addition:** `GET /api/jobs/:id` carries `errorCode` (the engine job view's `error_code`, `null` when none), so a reloaded failed job shows its reason.

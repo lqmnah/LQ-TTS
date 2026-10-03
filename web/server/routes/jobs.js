@@ -112,6 +112,7 @@ export function jobsRouter(ctx) {
     const row = await jobsRepo.own(req.session.user_id, job.id);
     res.json({
       ...toSummary(row),
+      errorCode: view.error_code ?? null,
       progress: view.progress,
       needsReview: view.needs_review,
       settings: view.settings,
