@@ -86,6 +86,34 @@ describe('upstream clients', () => {
       .rejects.toMatchObject({ status: 404, code: 'not_found' });
   });
 
+  it('settle and refund are terminal both ways, and settle is checked against the gross charge', async () => {
+    const a = `tts:${crypto.randomUUID()}:r1`;
+    await lqClient.hold({ userId: 'u1', amount: 10, ref: a });
+    await expect(lqClient.settle({ userId: 'u1', holdId: a, amount: 11 }))
+      .rejects.toMatchObject({ status: 400, code: 'invalid_request' });
+    const { balance: afterRefund } = await lqClient.refund({ userId: 'u1', holdId: a });
+    expect(await lqClient.settle({ userId: 'u1', holdId: a, amount: 10 })).toEqual({ balance: afterRefund });
+    expect(lq.state.net(a)).toBe(0);
+    const b = `tts:${crypto.randomUUID()}:r1`;
+    await lqClient.hold({ userId: 'u1', amount: 10, ref: b });
+    const { balance: afterSettle } = await lqClient.settle({ userId: 'u1', holdId: b, amount: 6 });
+    expect(await lqClient.refund({ userId: 'u1', holdId: b })).toEqual({ balance: afterSettle, refunded: 0 });
+    expect(lq.state.net(b)).toBe(6);
+  });
+
+  it('verify-2fa reports suspension before checking the code and keeps the challenge', async () => {
+    const { challenge } = await lqClient.verify({ identifier: 'budi', password: 'pw', ip: '1.2.3.4' });
+    lq.state.users.get('u2').suspended = true;
+    try {
+      await expect(lqClient.verify2fa({ challenge, code: '000000', ip: '1.2.3.4' }))
+        .rejects.toMatchObject({ name: 'UpstreamError', status: 403, code: 'suspended' });
+    } finally {
+      lq.state.users.get('u2').suspended = false;
+    }
+    await expect(lqClient.verify2fa({ challenge, code: '000000', ip: '1.2.3.4' })).rejects.toMatchObject({ status: 401, code: 'invalid_code' });
+    expect(await lqClient.verify2fa({ challenge, code: '123456', ip: '1.2.3.4' })).toMatchObject({ status: 'ok' });
+  });
+
   it('ledger outages surface as unavailable', async () => {
     lq.state.failNext.set('POST /credits/hold', 1);
     await expect(lqClient.hold({ userId: 'u1', amount: 1, ref: `tts:${crypto.randomUUID()}:r1` })).rejects.toMatchObject({ name: 'UpstreamUnavailable', status: 503 });

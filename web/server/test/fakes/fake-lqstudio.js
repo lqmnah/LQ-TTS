@@ -17,6 +17,7 @@ export async function startFakeLqStudio({ port = 0, token, users = [] } = {}) {
     users: new Map(users.map((u) => [String(u.id), { ...u }])),
     ledger: [],
     settled: new Set(),
+    refunded: new Set(),
     calls: [],
     down: false,
     rateLimited: false,
@@ -71,10 +72,12 @@ export async function startFakeLqStudio({ port = 0, token, users = [] } = {}) {
         return json(res, 200, { status: 'ok', user: pub(u) });
       }
       if (req.method === 'POST' && path === '/auth/verify-2fa') {
+        // Same order as LQ-Studio's periksa2fa: unknown challenge, then suspension (challenge kept), then the code.
         const u = state.users.get(state.challenges.get(body.challenge) ?? '');
-        if (!u || String(body.code) !== u.totp) return json(res, 401, { error: 'invalid_code' });
-        state.challenges.delete(body.challenge);
+        if (!u) return json(res, 401, { error: 'invalid_code' });
         if (u.suspended) return json(res, 403, { error: 'suspended' });
+        if (String(body.code) !== u.totp) return json(res, 401, { error: 'invalid_code' });
+        state.challenges.delete(body.challenge);
         if (!u.verified) return json(res, 200, { status: 'needs_verification' });
         return json(res, 200, { status: 'ok', user: pub(u) });
       }
@@ -99,9 +102,12 @@ export async function startFakeLqStudio({ port = 0, token, users = [] } = {}) {
         const u = state.users.get(String(body.userId));
         if (!u || !hasHold(u.id, body.holdId)) return json(res, 404, { error: 'not_found' });
         if (path === '/credits/settle') {
-          if (!state.settled.has(body.holdId)) {
+          // Validated against the gross charge; once settled or refunded the hold is terminal and nothing moves.
+          if (body.amount > state.holds.get(body.holdId).charged) {
+            return json(res, 400, { error: 'invalid_request', message: 'amount exceeds the held credits' });
+          }
+          if (!state.settled.has(body.holdId) && !state.refunded.has(body.holdId)) {
             const remainder = state.net(body.holdId) - body.amount;
-            if (remainder < 0) return json(res, 400, { error: 'invalid_request', message: 'amount exceeds the held credits' });
             if (remainder > 0) {
               u.balance += remainder;
               state.ledger.push({ ref: body.holdId, userId: u.id, type: 'refund', amount: remainder });
@@ -110,11 +116,12 @@ export async function startFakeLqStudio({ port = 0, token, users = [] } = {}) {
           }
           return json(res, 200, { balance: u.balance });
         }
-        const owed = state.settled.has(body.holdId) ? 0 : Math.max(0, state.net(body.holdId));
+        const owed = state.settled.has(body.holdId) || state.refunded.has(body.holdId) ? 0 : Math.max(0, state.net(body.holdId));
         if (owed > 0) {
           u.balance += owed;
           state.ledger.push({ ref: body.holdId, userId: u.id, type: 'refund', amount: owed });
         }
+        if (!state.settled.has(body.holdId)) state.refunded.add(body.holdId);
         return json(res, 200, { balance: u.balance, refunded: owed });
       }
       return json(res, 404, { error: 'not_found' });
