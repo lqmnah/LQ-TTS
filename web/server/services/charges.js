@@ -73,10 +73,13 @@ export function createCharges({ pool, lqstudio, sessions, log }) {
     await finish(charge, 'refunded', out?.balance);
   }
 
-  async function recordFailure(charge, err) {
+  // release: true only on paths that hold the claim; an unclaimed caller must not drop another resolver's claim.
+  async function recordFailure(charge, err, { release = false } = {}) {
     const { rows: [row] } = await pool.query(
-      'UPDATE charges SET attempts = attempts + 1, last_error = $2, resolving_until = NULL WHERE id = $1 RETURNING attempts, flagged_at',
-      [charge.id, String(err?.message ?? err).slice(0, 500)],
+      `UPDATE charges SET attempts = attempts + 1, last_error = $2,
+         resolving_until = CASE WHEN $3 THEN NULL ELSE resolving_until END
+       WHERE id = $1 RETURNING attempts, flagged_at`,
+      [charge.id, String(err?.message ?? err).slice(0, 500), release],
     );
     log.warn({ event: 'charge_attempt_failed', chargeId: charge.id, holdId: charge.hold_id, attempts: row?.attempts, error: String(err?.message ?? err) }, 'charge resolution failed');
     if (row && row.attempts >= FLAG_AFTER_ATTEMPTS && row.flagged_at === null) {
@@ -94,7 +97,7 @@ export function createCharges({ pool, lqstudio, sessions, log }) {
     try {
       await refund(charge);
     } catch (err) {
-      await recordFailure(charge, err);
+      await recordFailure(charge, err, { release: true });
     }
   }
 
@@ -109,7 +112,7 @@ export function createCharges({ pool, lqstudio, sessions, log }) {
       out = await lqstudio.refund({ userId: charge.user_id, holdId: charge.hold_id });
     } catch (err) {
       if (err instanceof UpstreamError && err.code === 'not_found') await unclaim(charge);
-      else await recordFailure(charge, err);
+      else await recordFailure(charge, err, { release: true });
       return;
     }
     await finish(charge, 'refunded', out?.balance);
@@ -148,7 +151,7 @@ export function createCharges({ pool, lqstudio, sessions, log }) {
       else await refund(charge);
       return true;
     } catch (err) {
-      await recordFailure(charge, err);
+      await recordFailure(charge, err, { release: true });
       return false;
     }
   }
@@ -162,5 +165,5 @@ export function createCharges({ pool, lqstudio, sessions, log }) {
     return ok;
   }
 
-  return { insertHeld, hold, refundNow, recordFailure, resolveOne, resolveJob };
+  return { insertHeld, hold, refundNow, recordFailure: (charge, err) => recordFailure(charge, err), resolveOne, resolveJob };
 }

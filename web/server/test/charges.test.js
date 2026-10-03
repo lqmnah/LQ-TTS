@@ -113,6 +113,18 @@ describe('charge claims', () => {
     expect((await row(c.id)).state).toBe('settled');
   });
 
+  it('an unclaimed recordFailure counts the attempt but leaves an active claim alone', async () => {
+    const charges = make({});
+    const c = await heldRow();
+    const { rows: [claimed] } = await pool.query(
+      `UPDATE charges SET resolving_until = now() + interval '30 seconds' WHERE id = $1 RETURNING resolving_until`, [c.id],
+    );
+    await charges.recordFailure(c, new Error('engine down'));
+    const after = await row(c.id);
+    expect(after.attempts).toBe(1);
+    expect(after.resolving_until).toEqual(claimed.resolving_until);
+  });
+
   it('a hold LQ-Studio does not know stays held and unclaimed, so reconciliation can take it', async () => {
     const lqstudio = {
       hold: vi.fn(async () => { throw new Error('timeout'); }),
