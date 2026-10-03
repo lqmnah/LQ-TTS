@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync } from 'node:fs';
 import { assertLayout } from '../harness/layout.mjs';
 import { AUTH_FILE, STATE_FILE } from '../target.mjs';
-import { anonymousProbe, expect, test } from './fixtures.js';
+import { anonymousProbe, expect, routeAccess, test } from './fixtures.js';
 
 const VIEWPORTS = [
   { name: '390', width: 390, height: 844, touch: true },
@@ -24,12 +24,13 @@ async function shot(page, viewport, name) {
 }
 
 for (const vp of VIEWPORTS) {
-  test(`screens at ${vp.name}px`, async ({ browser, guard, baseURL, extraHTTPHeaders }) => {
+  test(`screens at ${vp.name}px`, async ({ browser, guard, baseURL }) => {
     const { jobId, voiceName } = JSON.parse(readFileSync(STATE_FILE, 'utf8'));
-    // browser.newContext() does not inherit `use` options, so baseURL and the Access headers are passed explicitly.
-    const contextOptions = { baseURL, extraHTTPHeaders, viewport: { width: vp.width, height: vp.height }, colorScheme: 'dark', locale: 'id-ID', isMobile: vp.touch, hasTouch: vp.touch };
+    // browser.newContext() does not inherit `use` options or fixtures: baseURL is passed and the Access route added explicitly.
+    const contextOptions = { baseURL, viewport: { width: vp.width, height: vp.height }, colorScheme: 'dark', locale: 'id-ID', isMobile: vp.touch, hasTouch: vp.touch };
 
     const anon = await browser.newContext(contextOptions);
+    await routeAccess(anon, baseURL);
     const loginPage = await anon.newPage();
     let anonymous = true;
     guard.expect((res) => anonymous && anonymousProbe(res));
@@ -43,6 +44,7 @@ for (const vp of VIEWPORTS) {
     anonymous = false;
 
     const context = await browser.newContext({ ...contextOptions, storageState: AUTH_FILE });
+    await routeAccess(context, baseURL);
     const page = await context.newPage();
     guard.watch(page);
     const screens = [

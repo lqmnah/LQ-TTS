@@ -1,10 +1,12 @@
 import { mkdirSync } from 'node:fs';
 import { assertLayout } from '../harness/layout.mjs';
+import { accessHeaders } from '../target.mjs';
 import { anonymousProbe, expect, test } from './fixtures.js';
 
 test('public smoke: health, login page at 3 widths, wrong password reaches LQ-Studio', async ({ page, guard }) => {
   guard.expect(anonymousProbe);
-  const health = await page.request.get('/api/health');
+  // APIRequestContext bypasses routes, so the (target-origin) Access token is passed per call.
+  const health = await page.request.get('/api/health', { headers: accessHeaders() });
   expect(health.status()).toBe(200);
   const body = await health.json();
   expect(body).toMatchObject({ engine: 'ok', lqstudio: 'ok' });

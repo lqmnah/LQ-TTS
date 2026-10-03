@@ -1,5 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
-import { targetConfig } from './target.mjs';
+import { TARGET, targetConfig } from './target.mjs';
 
 const target = targetConfig();
 
@@ -15,11 +15,11 @@ export default defineConfig({
   use: {
     ...devices['Desktop Chrome'],
     baseURL: target.baseURL,
-    extraHTTPHeaders: target.headers,
     viewport: { width: 1440, height: 900 },
     locale: 'id-ID',
     colorScheme: 'dark',
-    trace: 'retain-on-failure',
+    // Traces record request headers; off on remote targets so the Access service token never lands in an artifact.
+    trace: TARGET === 'local' ? 'retain-on-failure' : 'off',
     screenshot: 'only-on-failure',
   },
   projects: [

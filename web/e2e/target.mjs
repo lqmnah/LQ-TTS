@@ -28,11 +28,19 @@ function required(name) {
   return value;
 }
 
+/**
+ * Cloudflare Access service token for staging. It is attached by a route to target-origin requests only
+ * (tests/fixtures.js), never as extraHTTPHeaders, so third-party requests (e.g. Cloudflare's analytics beacon) never see it.
+ */
+export function accessHeaders() {
+  if (TARGET !== 'staging-public') return {};
+  return { 'cf-access-client-id': required('CF_ACCESS_CLIENT_ID'), 'cf-access-client-secret': required('CF_ACCESS_CLIENT_SECRET') };
+}
+
 export function targetConfig() {
   if (TARGET === 'local') {
     return {
       baseURL: `http://127.0.0.1:${LOCAL_PORT}`,
-      headers: {},
       webServer: [
         { command: 'node harness/fake-lqstudio.mjs', port: FAKE_LQS_PORT, reuseExistingServer: false, timeout: 20_000 },
         // SIGTERM (not Playwright's default SIGKILL) so run-server can purge its engine voices and drop the schema.
@@ -41,13 +49,10 @@ export function targetConfig() {
     };
   }
   if (TARGET === 'staging-public') {
-    return {
-      baseURL: 'https://tts-stg.lq-studio.com',
-      headers: { 'CF-Access-Client-Id': required('CF_ACCESS_CLIENT_ID'), 'CF-Access-Client-Secret': required('CF_ACCESS_CLIENT_SECRET') },
-      webServer: undefined,
-    };
+    accessHeaders(); // fail fast when the token is missing
+    return { baseURL: 'https://tts-stg.lq-studio.com', webServer: undefined };
   }
-  if (TARGET === 'prod') return { baseURL: 'https://tts.lq-studio.com', headers: {}, webServer: undefined };
+  if (TARGET === 'prod') return { baseURL: 'https://tts.lq-studio.com', webServer: undefined };
   throw new Error(`unknown E2E_TARGET ${TARGET}`);
 }
 
