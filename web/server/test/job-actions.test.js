@@ -125,11 +125,12 @@ describe('regenerate, cancel and delete', () => {
 
   it('holds exactly once when two regenerations of a sentence race', async () => {
     const id = await doneJob();
-    // Hold both requests after their "already held?" check so each passes it before either inserts:
-    // only the unique hold ref can then stop the second hold.
+    // Hold every request after its retry-numbering query so, unserialized, both pick the same ref before either
+    // inserts. Serialized, only one gets there; the timer stops the barrier from waiting for a second forever.
     const query = h.pool.query;
     let release;
     const bothChecked = new Promise((r) => { release = r; });
+    const timer = setTimeout(() => release(), 300);
     let checks = 0;
     h.pool.query = async function (...args) {
       const out = await query.apply(this, args);
@@ -144,12 +145,73 @@ describe('regenerate, cancel and delete', () => {
       results = await Promise.all([0, 1].map(() => ana.post(`/api/jobs/${id}/sentences/0/regenerate`, {})));
     } finally {
       h.pool.query = query;
+      clearTimeout(timer);
     }
-    expect(checks).toBe(2);
     expect(results.map((r) => r.status).sort()).toEqual([202, 409]);
     expect(results.find((r) => r.status === 409).body.error.code).toBe('not_regeneratable');
     expect(holdsFor(`tts:${id}:`)).toHaveLength(1);
     expect((await charges(id)).filter((c) => c.kind === 'regenerate')).toHaveLength(1);
+  });
+
+  it('lets only one regeneration per job through when different sentences race', async () => {
+    const id = await doneJob();
+    // Hold every request just after the job-wide guard so, unserialized, both pass it before either holds.
+    // Serialized, only one reaches the guard; the timer stops the barrier from waiting for a second forever.
+    const query = h.pool.query;
+    let release;
+    const passed = new Promise((r) => { release = r; });
+    const timer = setTimeout(() => release(), 300);
+    let checks = 0;
+    h.pool.query = async function (...args) {
+      const out = await query.apply(this, args);
+      if (String(args[0]).includes('revision > $2')) {
+        if (++checks === 2) release();
+        await passed;
+      }
+      return out;
+    };
+    let results;
+    try {
+      results = await Promise.all([0, 1].map((idx) => ana.post(`/api/jobs/${id}/sentences/${idx}/regenerate`, {})));
+    } finally {
+      h.pool.query = query;
+      clearTimeout(timer);
+    }
+    expect(results.map((r) => r.status).sort()).toEqual([202, 409]);
+    expect(results.find((r) => r.status === 409).body.error.code).toBe('not_regeneratable');
+    expect(holdsFor(`tts:${id}:`)).toHaveLength(1);
+    expect((await charges(id)).filter((c) => c.kind === 'regenerate')).toHaveLength(1);
+  });
+
+  it('numbers a retry after the highest earlier attempt, not the count of rows', async () => {
+    const id = await doneJob();
+    // Attempts a1 (the bare ref) and a3 remain; a2 was deleted after an insufficient_credits hold.
+    for (const holdId of [`tts:${id}:r2:s0`, `tts:${id}:r2:s0:a3`]) {
+      await h.pool.query(
+        `INSERT INTO charges (user_id, job_id, revision, kind, sentence_idx, chars, credits, hold_id, state, resolved_at)
+         VALUES ('ana', $1, 2, 'regenerate', 0, 4, 1, $2, 'refunded', now())`,
+        [id, holdId],
+      );
+    }
+    const res = await ana.post(`/api/jobs/${id}/sentences/0/regenerate`, {});
+    expect(res.status).toBe(202);
+    expect(holdsFor(`tts:${id}:`).at(-1).body.ref).toBe(`tts:${id}:r2:s0:a4`);
+  });
+
+  it('releases the per-job lock after success and after an engine rejection', async () => {
+    const regenLocks = async (jobId) => (await h.pool.query(
+      `SELECT count(*)::int AS n FROM pg_locks, hashtextextended($1, 0) AS k
+       WHERE locktype = 'advisory' AND objsubid = 1
+         AND classid::bigint = (k >> 32) & 4294967295 AND objid::bigint = k & 4294967295`,
+      [`regen:${jobId}`],
+    )).rows[0].n;
+    const ok = await doneJob();
+    expect((await ana.post(`/api/jobs/${ok}/sentences/0/regenerate`, {})).status).toBe(202);
+    expect(await regenLocks(ok)).toBe(0);
+    const bad = await doneJob();
+    h.engine.state.failNext.set('POST /v1/jobs/:id/sentences/:idx/regenerate', { status: 400, code: 'invalid_text', message: 'no' });
+    expect((await ana.post(`/api/jobs/${bad}/sentences/0/regenerate`, {})).status).toBe(400);
+    expect(await regenLocks(bad)).toBe(0);
   });
 
   it('cancelling a queued job refunds it at once', async () => {
