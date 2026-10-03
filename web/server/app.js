@@ -2,19 +2,23 @@ import express from 'express';
 import { csrf, requireAuth } from './http/middleware.js';
 import { ApiError, errorHandler } from './lib/errors.js';
 import { authRouter } from './routes/auth.js';
+import { healthRouter } from './routes/health.js';
 import { meRouter } from './routes/me.js';
+import { mountClient } from './routes/static.js';
 
-export function createApp(ctx) {
+export function createApp(ctx, { healthCacheMs = 10000 } = {}) {
   const app = express();
   app.disable('x-powered-by');
   app.use('/api', express.json({ limit: '256kb' }));
   app.use('/api', csrf);
+  app.use('/api', healthRouter(ctx, { cacheMs: healthCacheMs }));
   app.use('/api', authRouter(ctx));
   app.use('/api', requireAuth(ctx));
   app.use('/api', meRouter(ctx));
   app.use('/api', () => {
     throw new ApiError('not_found', 'no such endpoint');
   });
+  mountClient(app, ctx.config.clientDist);
   app.use(errorHandler(ctx.log));
   return app;
 }
