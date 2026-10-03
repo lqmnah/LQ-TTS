@@ -65,13 +65,14 @@ export default function AppShell() {
         </main>
       </div>
 
+      {/* 63 px tabs + 1 px top border = the 64 px the content reserves for this bar. */}
       <nav aria-label={t('nav.label')} data-testid="bottom-nav" className="fixed inset-x-0 bottom-0 z-[var(--z-sticky)] grid grid-cols-4 border-t border-line bg-surface pb-[env(safe-area-inset-bottom)] md:hidden">
         {NAV.map((item) => (
           <NavLink
             key={item.to}
             to={item.to}
             end={item.end}
-            className={({ isActive }) => `flex h-16 flex-col items-center justify-center gap-1 text-xs font-medium transition-colors duration-150 active:scale-[0.98] motion-reduce:active:scale-100 ${active(item, isActive) ? 'text-ink' : 'text-muted'}`}
+            className={({ isActive }) => `flex h-[63px] flex-col items-center justify-center gap-1 text-xs font-medium transition-colors duration-150 active:scale-[0.98] motion-reduce:active:scale-100 ${active(item, isActive) ? 'text-ink' : 'text-muted'}`}
           >
             {({ isActive }) => (
               <>
