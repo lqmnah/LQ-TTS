@@ -61,6 +61,7 @@ for (const vp of VIEWPORTS) {
       await settle(page);
       // The restored draft is ready to send: the screenshot must show the real, enabled primary action.
       if (name === 'tts') await expect(page.getByTestId('generate')).toBeEnabled();
+      if (name === 'voices') await expect(page.getByTestId('profile-card').filter({ hasText: 'Pandji' })).toHaveAttribute('data-status', 'ready');
       const m = await assertLayout(page, vp, { touch: vp.touch });
       if (vp.width === 1440) expect(m.sidebar?.width).toBe(232);
       if (vp.width === 768) expect(m.sidebar?.width).toBe(72);
