@@ -163,6 +163,8 @@ async function addProfile(ctx, args, { stdin, out, pollMs, timeoutMs, sleep, now
     }
     out(`profile ${meta.slug} active voice ${created.id}`);
     if (previous && previous !== created.id) {
+      // Named before the wait, so an interrupted run still shows which voice was left behind.
+      out(`previous voice ${previous} retiring in ${args.graceMs / 1000} s`);
       await sleep(args.graceMs);
       if (stopping) return await halt();
       out(await retire(previous, ctx));

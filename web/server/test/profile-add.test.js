@@ -167,7 +167,8 @@ describe('profile-add CLI', () => {
     expect(seenWhileProcessing).toEqual([oldId, true]);
     expect(second.code).toBe(0);
     expect(second.lines).toEqual([
-      `voice ${newId} processing`, `voice ${newId} ready`, `profile replace-order active voice ${newId}`, `previous voice ${oldId} deleted`,
+      `voice ${newId} processing`, `voice ${newId} ready`, `profile replace-order active voice ${newId}`,
+      `previous voice ${oldId} retiring in 60 s`, `previous voice ${oldId} deleted`,
     ]);
     expect((await h.ctx.profiles.bySlug('replace-order')).voice_id).toBe(newId);
     expect(h.engine.state.voices.has(oldId)).toBe(false);
@@ -195,10 +196,13 @@ describe('profile-add CLI', () => {
     const meta = writeMeta({ slug: 'grace' });
     const { id: oldId } = await run(['--meta', meta, '--filename', 'a.wav']);
     const graces = [];
-    const second = await run(['--meta', meta, '--filename', 'b.wav'], {
+    const linesAtGrace = [];
+    const second = start(['--meta', meta, '--filename', 'b.wav'], {
       sleep: async (ms) => {
         if (ms === POLL_MS) return finishAs('ready')();
         graces.push(ms);
+        // The old voice id is on screen before the wait, so an interrupted run still names it.
+        linesAtGrace.push(...second.lines);
         // A job create that passed its voice check on the old voice before the switch lands now.
         expect((await h.ctx.profiles.bySlug('grace')).voice_id).not.toBe(oldId);
         await h.pool.query(
@@ -207,9 +211,12 @@ describe('profile-add CLI', () => {
         );
       },
     });
+    const code = await second.done;
+    printed.push(...second.lines, ...second.errors);
     expect(graces).toEqual([60_000]);
-    expect(second.code).toBe(0);
-    expect(second.lines.at(-1)).toBe(`previous voice ${oldId} kept, used by jobs`);
+    expect(linesAtGrace.at(-1)).toBe(`previous voice ${oldId} retiring in 60 s`);
+    expect(code).toBe(0);
+    expect(second.lines.slice(-2)).toEqual([`previous voice ${oldId} retiring in 60 s`, `previous voice ${oldId} kept, used by jobs`]);
     expect(h.engine.state.voices.has(oldId)).toBe(true);
   });
 
@@ -221,7 +228,7 @@ describe('profile-add CLI', () => {
       sleep: async (ms) => (ms === POLL_MS ? finishAs('ready')() : graces.push(ms)),
     });
     expect(graces).toEqual([7000]);
-    expect(second.lines.at(-1)).toBe(`previous voice ${oldId} deleted`);
+    expect(second.lines.slice(-2)).toEqual([`previous voice ${oldId} retiring in 7 s`, `previous voice ${oldId} deleted`]);
     const before = uploads();
     for (const argv of [
       ['--meta', meta, '--filename', 'b.wav', '--grace-seconds=-1'],
@@ -291,7 +298,10 @@ describe('profile-add CLI', () => {
       return true;
     });
     expect(res.code).toBe(143);
-    expect(res.lines).toEqual([`voice ${res.id} processing`, `voice ${res.id} ready`, `profile sig-grace active voice ${res.id}`]);
+    expect(res.lines).toEqual([
+      `voice ${res.id} processing`, `voice ${res.id} ready`, `profile sig-grace active voice ${res.id}`,
+      `previous voice ${oldId} retiring in 60 s`,
+    ]);
     expect(h.engine.state.voices.has(res.id)).toBe(true);
     expect(h.engine.state.voices.has(oldId)).toBe(true);
     expect((await h.ctx.profiles.bySlug('sig-grace')).voice_id).toBe(res.id);
