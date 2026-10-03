@@ -47,7 +47,7 @@ describe('voiceover jobs', () => {
     });
     const list = await ana.get('/api/jobs');
     expect(list.body.items[0]).toMatchObject({
-      id: res.body.id, title: text.slice(0, 60), voiceId: voice.id, voiceName: 'Suara Ana', status: 'queued',
+      id: res.body.id, title: 'Halo dunia.', voiceId: voice.id, voiceName: 'Suara Ana', status: 'queued',
       chars: 239, credits: 3, revision: 1, audioSeconds: null, finishedAt: null,
     });
   });
