@@ -29,23 +29,35 @@ async function boot(h) {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   const exited = new Promise((resolve) => child.on('exit', (code) => resolve(code)));
-  const port = await new Promise((resolve, reject) => {
-    let out = '';
-    child.stdout.on('data', (chunk) => {
-      out += chunk;
-      const m = out.match(/"event":"listening"[^\n]*"port":(\d+)/);
-      if (m) resolve(Number(m[1]));
+  try {
+    const port = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('server did not start listening within 10 s')), 10_000);
+      let out = '';
+      child.stdout.on('data', (chunk) => {
+        out += chunk;
+        const m = out.match(/"event":"listening"[^\n]*"port":(\d+)/);
+        if (m) {
+          clearTimeout(timer);
+          resolve(Number(m[1]));
+        }
+      });
+      exited.then((code) => {
+        clearTimeout(timer);
+        reject(new Error(`server exited ${code} before listening`));
+      });
     });
-    exited.then((code) => reject(new Error(`server exited ${code} before listening`)));
-  });
-  const base = `http://127.0.0.1:${port}`;
-  const login = await fetch(`${base}/api/auth/login`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-requested-with': 'lq-tts' },
-    body: JSON.stringify({ identifier: USERS.ana.email, password: USERS.ana.password }),
-  });
-  const cookie = login.headers.getSetCookie().find((c) => c.startsWith('lqtts_sid=')).split(';')[0];
-  return { child, exited, base, cookie };
+    const base = `http://127.0.0.1:${port}`;
+    const login = await fetch(`${base}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-requested-with': 'lq-tts' },
+      body: JSON.stringify({ identifier: USERS.ana.email, password: USERS.ana.password }),
+    });
+    const cookie = login.headers.getSetCookie().find((c) => c.startsWith('lqtts_sid=')).split(';')[0];
+    return { child, exited, base, cookie };
+  } catch (err) {
+    child.kill('SIGKILL'); // never leak the child when boot fails
+    throw err;
+  }
 }
 
 describe('graceful shutdown', () => {

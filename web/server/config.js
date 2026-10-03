@@ -15,8 +15,8 @@ export const PRICING = Object.freeze({
 const trimSlash = (url) => url.replace(/\/+$/, '');
 const intervalMs = (raw) => {
   const ms = Number(raw || 60000);
-  if (!Number.isInteger(ms) || ms < 1000 || (raw && !/^\d+$/.test(raw))) {
-    throw new Error('RECONCILE_INTERVAL_MS must be a whole number of milliseconds, at least 1000');
+  if (!Number.isInteger(ms) || ms < 1000 || ms > 2147483647 || (raw && !/^\d+$/.test(raw))) {
+    throw new Error('RECONCILE_INTERVAL_MS must be a whole number of milliseconds, at least 1000 and at most 2147483647');
   }
   return ms;
 };
