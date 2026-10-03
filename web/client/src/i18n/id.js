@@ -10,6 +10,7 @@ export default {
   'account.language': 'Bahasa',
   'account.logout': 'Keluar',
   'account.plan': 'Paket {plan}',
+  'account.logout_error': 'Belum berhasil keluar karena server tidak menjawab. Kamu masih masuk, coba lagi.',
   'account.lang_error': 'Bahasa belum tersimpan di server. Coba lagi.',
 
   'plan.free': 'Free',

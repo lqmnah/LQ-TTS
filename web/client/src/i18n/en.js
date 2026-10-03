@@ -10,6 +10,7 @@ export default {
   'account.language': 'Language',
   'account.logout': 'Log out',
   'account.plan': '{plan} plan',
+  'account.logout_error': 'Could not log out because the server did not answer. You are still signed in, try again.',
   'account.lang_error': 'The language was not saved on the server. Try again.',
 
   'plan.free': 'Free',

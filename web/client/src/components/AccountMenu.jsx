@@ -11,6 +11,7 @@ export default function AccountMenu() {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [langError, setLangError] = useState(false);
+  const [logoutError, setLogoutError] = useState(false);
   const rootRef = useRef(null);
   const buttonRef = useRef(null);
   const panelRef = useRef(null);
@@ -50,7 +51,13 @@ export default function AccountMenu() {
   }
 
   async function logout() {
-    await session.logout();
+    setLogoutError(false);
+    try {
+      await session.logout();
+    } catch {
+      setLogoutError(true);
+      return;
+    }
     navigate('/login', { replace: true });
   }
 
@@ -60,11 +67,11 @@ export default function AccountMenu() {
         ref={buttonRef}
         type="button"
         data-testid="account-button"
-        aria-label={t('account.menu')}
+        aria-label={`${me.name}, ${t('account.menu')}`}
         aria-expanded={open}
         aria-controls="account-panel"
         onClick={() => setOpen((v) => !v)}
-        className="flex h-10 max-w-[14rem] items-center gap-2 rounded-control px-3 text-sm font-medium text-ink transition-colors duration-150 hover:bg-surface-2 pointer-coarse:min-h-11"
+        className="flex h-10 max-w-[14rem] items-center gap-2 rounded-control px-3 text-sm font-medium text-ink transition-colors duration-150 hover:bg-surface-2 active:scale-[0.98] motion-reduce:active:scale-100 pointer-coarse:min-h-11"
       >
         <span className="truncate">{me.name}</span>
         <CaretDownIcon size={16} aria-hidden className={`shrink-0 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
@@ -80,6 +87,7 @@ export default function AccountMenu() {
             {langError ? <p className="mt-2 text-xs text-danger" role="alert">{t('account.lang_error')}</p> : null}
           </div>
           <Button className="mt-4 w-full" icon={SignOutIcon} onClick={logout} data-testid="logout">{t('account.logout')}</Button>
+          {logoutError ? <p className="mt-2 text-xs text-danger" role="alert">{t('account.logout_error')}</p> : null}
         </div>
       ) : null}
     </div>

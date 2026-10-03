@@ -4,7 +4,7 @@ const VARIANTS = {
   primary: 'bg-accent text-accent-ink hover:brightness-110 disabled:bg-surface-2 disabled:text-dim disabled:hover:brightness-100',
   secondary: 'border border-line bg-surface text-ink hover:border-dim hover:bg-surface-2 disabled:text-dim disabled:hover:border-line disabled:hover:bg-surface',
   ghost: 'text-muted hover:bg-surface-2 hover:text-ink disabled:text-dim disabled:hover:bg-transparent',
-  danger: 'border border-danger/40 bg-danger-soft text-danger hover:border-danger disabled:text-dim',
+  danger: 'border border-danger/40 bg-danger-soft text-danger enabled:hover:border-danger disabled:text-dim',
 };
 const SIZES = { sm: 'h-9 px-3 text-sm', md: 'h-10 px-4 text-sm', lg: 'h-12 px-5 text-base' };
 
@@ -28,7 +28,7 @@ export function Button({ variant = 'secondary', size = 'md', loading = false, ic
   );
 }
 
-export const inputClass = 'block w-full rounded-control border border-line bg-surface px-3 text-base text-ink placeholder:text-dim transition-colors duration-150 hover:border-dim focus-visible:border-accent aria-[invalid=true]:border-danger disabled:cursor-not-allowed disabled:text-dim';
+export const inputClass = 'block w-full rounded-control border border-line bg-surface px-3 text-base text-ink placeholder:text-dim transition-colors duration-150 enabled:hover:border-dim focus-visible:border-accent aria-[invalid=true]:border-danger disabled:cursor-not-allowed disabled:text-dim';
 
 export function Field({ id, label, help = null, error = null, children, className = '' }) {
   return (
@@ -147,7 +147,7 @@ export function Segmented({ options, value, onChange, labelledBy }) {
             data-value={o.value}
             onKeyDown={onKeyDown}
             onClick={() => onChange(o.value)}
-            className={`h-8 min-w-14 rounded-[6px] px-3 text-sm font-medium transition-colors duration-150 pointer-coarse:min-h-11 ${on ? 'bg-surface text-ink shadow-[0_1px_2px_rgb(0_0_0/0.12)]' : 'text-muted hover:text-ink'}`}
+            className={`h-8 min-w-14 rounded-[6px] px-3 text-sm font-medium transition-colors duration-150 active:scale-[0.98] motion-reduce:active:scale-100 pointer-coarse:min-h-11 ${on ? 'bg-surface text-ink shadow-[0_1px_2px_rgb(0_0_0/0.12)]' : 'text-muted hover:text-ink'}`}
           >
             {o.label}
           </button>

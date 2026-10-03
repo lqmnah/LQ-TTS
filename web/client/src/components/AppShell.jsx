@@ -41,7 +41,7 @@ export default function AppShell() {
               to={item.to}
               end={item.end}
               title={t(item.key)}
-              className={({ isActive }) => `flex h-11 items-center gap-3 rounded-control px-3 text-sm font-medium transition-colors duration-150 md:justify-center lg:justify-start ${active(item, isActive) ? 'bg-accent-soft text-ink' : 'text-muted hover:bg-surface-2 hover:text-ink'}`}
+              className={({ isActive }) => `flex h-11 items-center gap-3 rounded-control px-3 text-sm font-medium transition-colors duration-150 active:scale-[0.98] motion-reduce:active:scale-100 md:justify-center lg:justify-start ${active(item, isActive) ? 'bg-accent-soft text-ink' : 'text-muted hover:bg-surface-2 hover:text-ink'}`}
             >
               {({ isActive }) => (
                 <>
@@ -71,7 +71,7 @@ export default function AppShell() {
             key={item.to}
             to={item.to}
             end={item.end}
-            className={({ isActive }) => `flex h-16 flex-col items-center justify-center gap-1 text-xs font-medium transition-colors duration-150 ${active(item, isActive) ? 'text-ink' : 'text-muted'}`}
+            className={({ isActive }) => `flex h-16 flex-col items-center justify-center gap-1 text-xs font-medium transition-colors duration-150 active:scale-[0.98] motion-reduce:active:scale-100 ${active(item, isActive) ? 'text-ink' : 'text-muted'}`}
           >
             {({ isActive }) => (
               <>

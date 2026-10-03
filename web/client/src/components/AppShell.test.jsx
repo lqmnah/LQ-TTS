@@ -1,6 +1,7 @@
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ApiError } from '../lib/api.js';
 import { renderRoutes, ME } from '../test/render.jsx';
 import AppShell from './AppShell.jsx';
 
@@ -57,5 +58,37 @@ describe('AppShell', () => {
     await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByText('rara@example.com')).not.toBeInTheDocument());
     expect(screen.getByTestId('account-button')).toHaveFocus();
+  });
+
+  it('reverts the language when saving it fails, and the same option retries', async () => {
+    api.setLang.mockRejectedValueOnce(new ApiError(0, 'network', 'down'));
+    api.setLang.mockResolvedValueOnce({ ...ME, lang: 'en' });
+    const user = userEvent.setup();
+    renderRoutes(routes);
+    await user.click(screen.getByTestId('account-button'));
+    await user.click(screen.getByRole('radio', { name: 'English' }));
+    expect(await screen.findByText('Bahasa belum tersimpan di server. Coba lagi.')).toBeInTheDocument();
+    expect(screen.getAllByRole('link', { name: 'Suara' }).length).toBeGreaterThan(0);
+    expect(document.documentElement.lang).toBe('id');
+    expect(screen.getByRole('radio', { name: 'Bahasa Indonesia' })).toHaveAttribute('aria-checked', 'true');
+    await user.click(screen.getByRole('radio', { name: 'English' }));
+    expect(api.setLang).toHaveBeenCalledTimes(2);
+    expect((await screen.findAllByRole('link', { name: 'Voices' })).length).toBeGreaterThan(0);
+  });
+
+  it('keeps the session and says so when logout fails', async () => {
+    api.logout.mockRejectedValue(new ApiError(0, 'network', 'down'));
+    const user = userEvent.setup();
+    renderRoutes(routes);
+    await user.click(screen.getByTestId('account-button'));
+    await user.click(screen.getByTestId('logout'));
+    expect(await screen.findByText('Belum berhasil keluar karena server tidak menjawab. Kamu masih masuk, coba lagi.')).toBeInTheDocument();
+    expect(screen.queryByText('login screen')).not.toBeInTheDocument();
+    expect(screen.getByText('home')).toBeInTheDocument();
+  });
+
+  it('names the account button with the visible user name', () => {
+    renderRoutes(routes);
+    expect(screen.getByRole('button', { name: 'Rara Wibisono, Menu akun' })).toBeInTheDocument();
   });
 });

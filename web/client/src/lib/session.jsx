@@ -10,7 +10,7 @@ const SESSION_ENDED = new Set(['unauthorized', 'suspended', 'needs_verification'
 const anon = (reason = null) => ({ status: 'anon', me: null, error: null, reason });
 
 export function SessionProvider({ children, initial }) {
-  const { setLang } = useI18n();
+  const { lang: currentLang, setLang } = useI18n();
   const [state, setState] = useState(() => ({ reason: null, ...(initial ?? { status: 'unknown', me: null, error: null }) }));
 
   const refresh = useCallback(async () => {
@@ -34,20 +34,23 @@ export function SessionProvider({ children, initial }) {
     setLang(me.lang);
   }, [setLang]);
 
+  /** Throws when the server did not end the session; the session is kept so the cookie and the UI agree. */
   const logout = useCallback(async () => {
-    try {
-      await api.logout();
-    } catch {
-      // The local session is dropped either way; the server row expires on its own.
-    }
+    await api.logout();
     setState(anon());
   }, []);
 
   const changeLang = useCallback(async (lang) => {
     setLang(lang);
-    const me = await api.setLang(lang);
+    let me;
+    try {
+      me = await api.setLang(lang);
+    } catch (error) {
+      setLang(currentLang);
+      throw error;
+    }
     setState({ status: 'authed', me, error: null, reason: null });
-  }, [setLang]);
+  }, [currentLang, setLang]);
 
   const value = useMemo(
     () => ({ ...state, refresh, signedIn, logout, changeLang }),
