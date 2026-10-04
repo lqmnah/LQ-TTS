@@ -10,6 +10,7 @@ export const PRICING = Object.freeze({
   voiceLimitPaid: 25,
   consentVersion: 'v1',
   maxTextChars: 20000,
+  maxSentenceChars: 400, // = engine MAX_UNIT_CHARS (engine/lq_tts_engine/text/split.py): longer text is never one unit
 });
 
 const trimSlash = (url) => url.replace(/\/+$/, '');

@@ -147,7 +147,7 @@ export default {
   'job.sentence.play': 'Play sentence {n}',
   'job.sentence.edit': 'Edit',
   'job.sentence.text': 'Sentence text',
-  'job.sentence.one_sentence': 'Enter exactly one sentence.',
+  'job.sentence.one_sentence': 'Enter exactly one sentence, up to 400 characters.',
   'job.sentence.style': 'Style (optional)',
   'job.sentence.style_placeholder': 'e.g. cheerful, slightly faster',
   'job.sentence.regenerate': 'Regenerate',

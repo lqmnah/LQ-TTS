@@ -188,7 +188,17 @@ describe('JobPage', () => {
     const row = await screen.findByTestId('sentence-0');
     await user.click(within(row).getByRole('button', { name: 'Ubah' }));
     await user.click(within(row).getByRole('button', { name: 'Buat ulang' }));
-    expect(await within(row).findByRole('alert')).toHaveTextContent('Isi tepat satu kalimat.');
+    expect(await within(row).findByRole('alert')).toHaveTextContent('Isi tepat satu kalimat, maksimal 400 karakter.');
+  });
+
+  it('limits the sentence editor to 400 characters', async () => {
+    api.job.mockResolvedValue(job({ status: 'done', files: FILES }));
+    api.sentences.mockResolvedValue([sentence(0, 'done')]);
+    const user = userEvent.setup();
+    renderRoutes(routes, { path: '/jobs/j1' });
+    const row = await screen.findByTestId('sentence-0');
+    await user.click(within(row).getByRole('button', { name: 'Ubah' }));
+    expect(within(row).getByRole('textbox', { name: 'Teks kalimat' })).toHaveAttribute('maxLength', '400');
   });
 
   it('downloads the files the server has while a newer revision is running', async () => {

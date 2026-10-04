@@ -44,7 +44,7 @@ export function jobActionsRouter(ctx) {
     const job = await ownJob(ctx, userId, req.params.id);
     const idx = parseIdx(req.params.idx);
     const { text, style } = req.body ?? {};
-    if (text !== undefined && (typeof text !== 'string' || !text.trim() || countChars(text.trim()) > config.maxTextChars)) {
+    if (text !== undefined && (typeof text !== 'string' || !text.trim() || countChars(text.trim()) > config.maxSentenceChars)) {
       throw new ApiError('invalid_request', 'text must be one non-empty sentence');
     }
     if (style !== undefined && (typeof style !== 'string' || style.length > 200)) {

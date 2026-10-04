@@ -115,3 +115,19 @@ def test_long_unit_prefers_to_break_after_a_comma():
     units = split_script("satu dua tiga empat, " * 60)
     assert len(units) > 1 and max(len(u.text) for u in units) <= 400
     assert all(u.text.endswith(",") for u in units[:-1])
+
+
+def test_capped_tail_is_balanced_instead_of_left_tiny():
+    text = " ".join(["kata"] * 80) + " ab"  # 402 chars: a plain space cut would leave [399, 2]
+    pieces = [u.text for u in split_script(text)]
+    assert len(pieces) == 2 and max(map(len, pieces)) <= 400
+    assert min(map(len, pieces)) >= 100
+    assert " ".join(pieces).split() == text.split()
+
+
+def test_capped_punctuation_tail_never_stands_alone():
+    text = "x" * 400 + "."  # a hard cut would leave a lone "."
+    pieces = [u.text for u in split_script(text)]
+    assert "".join(pieces) == text
+    assert all(any(ch.isalnum() for ch in piece) for piece in pieces)
+    assert max(map(len, pieces)) <= 400 and min(map(len, pieces)) >= 100

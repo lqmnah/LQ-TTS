@@ -47,6 +47,20 @@ def _sentences_in(chunk: str) -> list[str]:
     return out
 
 
+def _tiny(tail: str, limit: int) -> bool:
+    return len(tail) < limit // 4 or _words(tail) < 3  # a pure-punctuation tail has no words
+
+
+def _balanced_cut(rest: str, limit: int) -> int:
+    """Cut for the last two pieces near the middle, both within limit: soft break, else space, else hard."""
+    lo, target = max(len(rest) - limit, 1), len(rest) // 2
+    soft = [m.end() for m in _SOFT_BREAK.finditer(rest, lo, target + 1) if m.end() <= target]
+    if soft:
+        return soft[-1]
+    space = rest.rfind(" ", lo, target)
+    return space + 1 if space >= lo else target
+
+
 def _cap(sentence: str, limit: int = MAX_UNIT_CHARS) -> list[str]:
     """Cuts a unit longer than limit after its last comma/semicolon/colon, else at its last space, else hard."""
     pieces: list[str] = []
@@ -57,6 +71,8 @@ def _cap(sentence: str, limit: int = MAX_UNIT_CHARS) -> list[str]:
         if cut < limit // 2:
             space = window.rfind(" ")
             cut = space + 1 if space > 0 else limit
+        if len(rest) - cut <= limit and _tiny(rest[cut:].strip(), limit):
+            cut = _balanced_cut(rest, limit)
         pieces.append(rest[:cut].strip())
         rest = rest[cut:].strip()
     if rest:

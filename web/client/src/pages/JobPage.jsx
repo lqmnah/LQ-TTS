@@ -394,7 +394,7 @@ function SentenceRow({ jobId, sentence, live, arrived, audioVersion, editable, o
         {editing ? (
           <form id={`${base}-editor`} onSubmit={regenerate} className="mt-3 flex flex-col gap-4 rounded-control bg-surface-2 p-4">
             <Field id={`${base}-text`} label={t('job.sentence.text')} help={t('job.sentence.one_sentence')}>
-              <textarea ref={textRef} id={`${base}-text`} rows={2} value={text} onChange={(e) => setText(e.target.value)} aria-describedby={`${base}-text-help`} className={`${inputClass} py-2 leading-relaxed`} />
+              <textarea ref={textRef} id={`${base}-text`} rows={2} maxLength={400} value={text} onChange={(e) => setText(e.target.value)} aria-describedby={`${base}-text-help`} className={`${inputClass} py-2 leading-relaxed`} />
             </Field>
             <Field id={`${base}-style`} label={t('job.sentence.style')}>
               <input id={`${base}-style`} value={style} maxLength={200} placeholder={t('job.sentence.style_placeholder')} onChange={(e) => setStyle(e.target.value)} className={`${inputClass} h-11`} />

@@ -48,6 +48,18 @@ describe('regenerate, cancel and delete', () => {
     expect((await ana.post(`/api/jobs/${await doneJob()}/sentences/9/regenerate`, {})).status).toBe(404);
   });
 
+  it('refuses a sentence longer than 400 characters before holding anything', async () => {
+    const id = await doneJob();
+    const regenCalls = h.engine.state.callsTo('POST', '/v1/jobs/:id/sentences/:idx/regenerate').length;
+    const ok = 'a'.repeat(400);
+    const res = await ana.post(`/api/jobs/${id}/sentences/0/regenerate`, { text: ` ${ok}b ` });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('invalid_request');
+    expect(holdsFor(`tts:${id}:`)).toHaveLength(0);
+    expect((await charges(id)).filter((c) => c.kind === 'regenerate')).toHaveLength(0);
+    expect(h.engine.state.callsTo('POST', '/v1/jobs/:id/sentences/:idx/regenerate').length).toBe(regenCalls);
+  });
+
   it('refunds when the engine rejects the regeneration and uses a fresh ref for the retry', async () => {
     const id = await doneJob();
     h.engine.state.failNext.set('POST /v1/jobs/:id/sentences/:idx/regenerate', { status: 400, code: 'invalid_text', message: 'text must be exactly one sentence' });

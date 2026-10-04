@@ -147,7 +147,7 @@ export default {
   'job.sentence.play': 'Putar kalimat {n}',
   'job.sentence.edit': 'Ubah',
   'job.sentence.text': 'Teks kalimat',
-  'job.sentence.one_sentence': 'Isi tepat satu kalimat.',
+  'job.sentence.one_sentence': 'Isi tepat satu kalimat, maksimal 400 karakter.',
   'job.sentence.style': 'Gaya (opsional)',
   'job.sentence.style_placeholder': 'mis. ceria, sedikit lebih cepat',
   'job.sentence.regenerate': 'Buat ulang',
