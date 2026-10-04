@@ -45,6 +45,8 @@ describe('resolveWebhookUrl', () => {
     ['ftp://hooks.example.com/x', /must use https/],
     ['not a url', /not a valid URL/],
     [42, /at most 500/],
+    // 500 characters as typed, 2870 once percent-encoded: the stored href is what must fit.
+    [`https://hooks.example.com/${'é'.repeat(474)}`, /at most 500/],
   ])('refuses %s before any DNS lookup', async (raw, message) => {
     const lookup = answers('93.184.216.34');
     await expect(resolveWebhookUrl(raw, { lookup })).rejects.toThrow(message);
@@ -77,6 +79,24 @@ describe('resolveWebhookUrl', () => {
     expect(err).toBeInstanceOf(WebhookUrlError);
     expect(err.message).toMatch(/does not resolve/);
     await expect(resolveWebhookUrl('https://empty.example.com/x', { lookup: answers() })).rejects.toThrow(/does not resolve/);
+  });
+
+  it('gives up on a lookup that never settles after five seconds, as a host that does not resolve', async () => {
+    vi.useFakeTimers();
+    try {
+      let settled = false;
+      const pending = resolveWebhookUrl('https://slow.example.com/x', { lookup: vi.fn(() => new Promise(() => {})) })
+        .catch((e) => e)
+        .finally(() => { settled = true; });
+      await vi.advanceTimersByTimeAsync(4999);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      const err = await pending;
+      expect(err).toBeInstanceOf(WebhookUrlError);
+      expect(err.message).toMatch(/does not resolve/);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('lets local runs reach a loopback receiver over http on any port, and nothing else private', async () => {

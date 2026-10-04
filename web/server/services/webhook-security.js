@@ -95,7 +95,29 @@ function isLoopback(address) {
   return inRange(v6, LOOPBACK_V6) || (inRange(v6, MAPPED_V6) && inRange(v6.slice(12), LOOPBACK_V4));
 }
 
-export const lookupAll = (host) => dns.promises.lookup(host, { all: true, verbatim: true });
+/** Bound on one webhook DNS answer; a slower one counts as a host that does not resolve. */
+export const LOOKUP_TIMEOUT_MS = 5000;
+
+// c-ares, not getaddrinfo: a stalled server cannot pin a libuv threadpool thread.
+const resolver = new dns.promises.Resolver({ timeout: 2000, tries: 2 });
+
+/** Every A then AAAA record of host; a family with no records (or a failed query) contributes nothing. */
+export async function lookupAll(host) {
+  const [v4, v6] = await Promise.allSettled([resolver.resolve4(host), resolver.resolve6(host)]);
+  return [
+    ...(v4.status === 'fulfilled' ? v4.value.map((address) => ({ address, family: 4 })) : []),
+    ...(v6.status === 'fulfilled' ? v6.value.map((address) => ({ address, family: 6 })) : []),
+  ];
+}
+
+function withTimeout(promise, ms) {
+  let timer;
+  const expired = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error('lookup timed out')), ms);
+    timer.unref?.();
+  });
+  return Promise.race([promise, expired]).finally(() => clearTimeout(timer));
+}
 
 /**
  * Checks a webhook URL and resolves its host, at create time and again before every delivery: https, port 443, no
@@ -104,15 +126,16 @@ export const lookupAll = (host) => dns.promises.lookup(host, { all: true, verbat
  * Answers the address the delivery must connect to, so a second DNS answer can never redirect it.
  */
 export async function resolveWebhookUrl(raw, { allowLoopback = false, lookup = lookupAll } = {}) {
-  if (typeof raw !== 'string' || raw.length === 0 || raw.length > MAX_WEBHOOK_URL) {
-    throw new WebhookUrlError(`webhookUrl must be a URL of at most ${MAX_WEBHOOK_URL} characters`);
-  }
+  const tooLong = `webhookUrl must be a URL of at most ${MAX_WEBHOOK_URL} characters`;
+  if (typeof raw !== 'string' || raw.length === 0 || raw.length > MAX_WEBHOOK_URL) throw new WebhookUrlError(tooLong);
   let url;
   try {
     url = new URL(raw);
   } catch {
     throw new WebhookUrlError('webhookUrl is not a valid URL');
   }
+  // Percent-encoding and punycode can grow the input several-fold; url.href is what gets stored and called.
+  if (url.href.length > MAX_WEBHOOK_URL) throw new WebhookUrlError(tooLong);
   const httpOk = allowLoopback && url.protocol === 'http:';
   if (url.protocol !== 'https:' && !httpOk) throw new WebhookUrlError('webhookUrl must use https');
   if (!allowLoopback && url.port !== '' && url.port !== '443') throw new WebhookUrlError('webhookUrl must use port 443');
@@ -124,7 +147,7 @@ export async function resolveWebhookUrl(raw, { allowLoopback = false, lookup = l
     addresses = [{ address: host, family: net.isIP(host) }];
   } else {
     try {
-      addresses = await lookup(host);
+      addresses = await withTimeout(Promise.resolve().then(() => lookup(host)), LOOKUP_TIMEOUT_MS);
     } catch {
       addresses = [];
     }
