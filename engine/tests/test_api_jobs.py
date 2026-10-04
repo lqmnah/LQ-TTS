@@ -159,3 +159,17 @@ def test_json_body_over_the_limit_is_refused_streamed_or_not(client, ready_voice
         r = client.post("/v1/jobs", headers=headers, content=body)
         assert r.status_code == 413
         assert r.json() == {"error": {"code": "too_large", "message": "request body too large"}}
+
+
+
+
+def test_callback_url_must_be_loopback_or_allowed_for_the_caller(client, cfg, repo, ready_voice):
+    for bad in ("http://169.254.169.254/latest/meta-data", "file:///etc/passwd", "http://user@127.0.0.1/cb",
+                "http://hooks.example.com/cb", "gopher://127.0.0.1/", "http://127.0.0.1:99999/cb", ""):
+        r = post_job(client, ready_voice, callback_url=bad)
+        assert r.status_code == 400 and r.json()["error"]["code"] == "invalid_callback_url", bad
+    for good in ("http://127.0.0.1:8751/api/internal/engine-callback", "http://localhost:8760/cb", "https://[::1]/cb"):
+        assert post_job(client, ready_voice, callback_url=good).status_code == 202, good
+    hosts = {"lq-tts": frozenset({"hooks.example.com"})}
+    allowed = TestClient(create_app(Config(**{**cfg.__dict__, "callback_hosts": hosts}), repo))
+    assert post_job(allowed, ready_voice, callback_url="https://hooks.example.com/cb").status_code == 202

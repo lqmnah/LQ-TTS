@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from dotenv import dotenv_values
@@ -30,6 +30,7 @@ class Config:
     device: str
     whisper_model: str
     min_free_gb: float
+    callback_hosts: dict[str, frozenset[str]] = field(default_factory=dict)
 
 
 def load_config(env: Mapping[str, str] | None = None) -> Config:
@@ -43,13 +44,24 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
         return value
 
     caller_tokens = _pairs(get("LQTTS_TOKENS"), "LQTTS_TOKENS")
+    tokens = {token: caller for caller, token in caller_tokens.items()}
+    callback_secrets = _pairs(get("LQTTS_CALLBACK_SECRETS"), "LQTTS_CALLBACK_SECRETS")
+    for caller in sorted(caller_tokens):
+        if caller not in callback_secrets:
+            raise ValueError(f"LQTTS_CALLBACK_SECRETS: no callback secret for caller {caller}")
+    callback_hosts: dict[str, frozenset[str]] = {}
+    for caller, hosts in _pairs(env.get("LQTTS_CALLBACK_HOSTS") or "", "LQTTS_CALLBACK_HOSTS").items():
+        if caller not in caller_tokens:
+            raise ValueError(f"LQTTS_CALLBACK_HOSTS: unknown caller {caller}")
+        callback_hosts[caller] = frozenset(h.strip().lower() for h in hosts.split("|") if h.strip())
     return Config(
         database_url=get("LQTTS_DATABASE_URL"),
         schema=get("LQTTS_SCHEMA", "lq_tts_engine"),
         data_dir=Path(get("LQTTS_DATA_DIR")).expanduser(),
-        tokens={token: caller for caller, token in caller_tokens.items()},
-        callback_secrets=_pairs(get("LQTTS_CALLBACK_SECRETS"), "LQTTS_CALLBACK_SECRETS"),
+        tokens=tokens,
+        callback_secrets=callback_secrets,
         device=get("LQTTS_DEVICE", "mps"),
         whisper_model=get("LQTTS_WHISPER_MODEL", "small"),
         min_free_gb=float(get("LQTTS_MIN_FREE_GB", "20")),
+        callback_hosts=callback_hosts,
     )

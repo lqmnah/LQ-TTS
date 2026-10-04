@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import time
 from pathlib import Path
@@ -86,3 +87,14 @@ def test_purge_skips_takes_deleted_mid_purge(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "stat", racing_stat)
     assert purge_unreferenced_takes(tmp_path, set()) == 1
     assert not os.path.exists(kept)
+
+
+
+
+def test_unusable_url_or_unknown_caller_is_logged_as_dropped(caplog):
+    sender, seen, sleeps = make_sender([200])
+    with caplog.at_level(logging.WARNING, logger="lq_tts_engine.callbacks"):
+        assert sender.deliver("lq-tts", "http://a\x00b/", {"job_id": "j1"}) is False  # httpx.InvalidURL
+        assert sender.deliver("nobody", "http://app.local/cb", {"job_id": "j2"}) is False  # no secret
+    dropped = [r.getMessage() for r in caplog.records if r.getMessage().startswith("callback dropped")]
+    assert len(dropped) == 2 and seen == []

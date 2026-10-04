@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from ..callbacks import callback_url_allowed
 from ..config import Config, load_config
 from ..db import make_pool, migrate
 from ..pipeline import job_dir, latest_revision, revision_dir
@@ -307,6 +308,10 @@ def register_job_routes(app: FastAPI, cfg: Config, repo: Repo, *, caller, need_d
         except ValidationError as exc:
             first = exc.errors()[0]
             raise ApiError(400, "invalid_settings", f"{'.'.join(map(str, first['loc']))}: {first['msg']}") from exc
+        if body.callback_url is not None and not callback_url_allowed(
+                body.callback_url, cfg.callback_hosts.get(who, frozenset())):
+            raise ApiError(400, "invalid_callback_url",
+                           "callback_url must be http(s) to loopback or to a host allowed for this caller")
         voice = own_voice(who, body.voice_id)
         if voice["status"] != "ready":
             raise ApiError(409, "voice_not_ready", f"voice is {voice['status']}")

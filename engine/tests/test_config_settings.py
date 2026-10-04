@@ -63,3 +63,18 @@ def test_job_settings_reject_unknown_keys_and_empty_formats():
 
 def test_job_settings_dedupe_formats_keeping_order():
     assert JobSettings(formats=["wav", "mp3", "wav"]).formats == ["wav", "mp3"]
+
+
+
+
+def test_every_caller_needs_a_callback_secret():
+    with pytest.raises(ValueError, match="no callback secret for caller lq-studio"):
+        load_config({**BASE_ENV, "LQTTS_CALLBACK_SECRETS": "lq-tts:sec-a"})
+
+
+def test_callback_hosts_are_per_caller_and_optional():
+    assert load_config(BASE_ENV).callback_hosts == {}
+    cfg = load_config({**BASE_ENV, "LQTTS_CALLBACK_HOSTS": "lq-studio:Hooks.Example.com|10.0.0.5"})
+    assert cfg.callback_hosts == {"lq-studio": frozenset({"hooks.example.com", "10.0.0.5"})}
+    with pytest.raises(ValueError, match="unknown caller nobody"):
+        load_config({**BASE_ENV, "LQTTS_CALLBACK_HOSTS": "nobody:x.example"})
