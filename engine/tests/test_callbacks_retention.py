@@ -98,3 +98,25 @@ def test_unusable_url_or_unknown_caller_is_logged_as_dropped(caplog):
         assert sender.deliver("nobody", "http://app.local/cb", {"job_id": "j2"}) is False  # no secret
     dropped = [r.getMessage() for r in caplog.records if r.getMessage().startswith("callback dropped")]
     assert len(dropped) == 2 and seen == []
+
+
+def test_undeliverable_url_is_dropped_at_once_without_retries(caplog):
+    sender, seen, sleeps = make_sender([200])
+    with caplog.at_level(logging.WARNING, logger="lq_tts_engine.callbacks"):
+        assert sender.deliver("lq-tts", "http://127.0.\t0.1/", {"job_id": "j1"}) is False
+        real = CallbackSender({"lq-tts": "s"}, sleep=sleeps.append)  # real transport raises UnsupportedProtocol
+        assert real.deliver("lq-tts", "ftp://127.0.0.1/cb", {"job_id": "j2"}) is False
+    dropped = [r for r in caplog.records if r.getMessage().startswith("callback dropped")]
+    assert len(dropped) == 2 and sleeps == [] and seen == []
+
+
+def test_transport_errors_are_still_retried():
+    sleeps = []
+
+    def handler(request):
+        raise httpx.ConnectError("refused", request=request)
+
+    sender = CallbackSender({"lq-tts": "s"}, client_factory=lambda: httpx.Client(transport=httpx.MockTransport(handler)),
+                            sleep=sleeps.append)
+    assert sender.deliver("lq-tts", "http://127.0.0.1:1/cb", {"job_id": "j1"}) is False
+    assert sleeps == [1, 5, 30, 120, 300]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -8,6 +9,23 @@ from pathlib import Path
 from dotenv import dotenv_values
 
 ENGINE_DIR = Path(__file__).resolve().parent.parent
+
+
+def _callback_hosts(caller: str, raw: str) -> frozenset[str]:
+    hosts = frozenset(h.strip().lower() for h in raw.split("|") if h.strip())
+    for host in hosts:
+        if any(ch.isspace() or ch in "/[]@" for ch in host) or (":" in host and not _is_ipv6(host)):
+            raise ValueError(f"LQTTS_CALLBACK_HOSTS: {caller}: {host!r} can never match; "
+                             "give a bare hostname or IP (no scheme, port, brackets, path or spaces)")
+    return hosts
+
+
+def _is_ipv6(host: str) -> bool:
+    try:
+        ipaddress.IPv6Address(host)
+    except ValueError:
+        return False
+    return True
 
 
 def _pairs(raw: str, name: str) -> dict[str, str]:
@@ -59,7 +77,7 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
     for caller, hosts in _pairs(env.get("LQTTS_CALLBACK_HOSTS") or "", "LQTTS_CALLBACK_HOSTS").items():
         if caller not in caller_tokens:
             raise ValueError(f"LQTTS_CALLBACK_HOSTS: unknown caller {caller}")
-        callback_hosts[caller] = frozenset(h.strip().lower() for h in hosts.split("|") if h.strip())
+        callback_hosts[caller] = _callback_hosts(caller, hosts)
     return Config(
         database_url=get("LQTTS_DATABASE_URL"),
         schema=get("LQTTS_SCHEMA", "lq_tts_engine"),

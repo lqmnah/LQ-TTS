@@ -70,8 +70,14 @@ class CallbackSender:
                 if 200 <= response.status_code < 300:
                     return True
                 last_error = f"HTTP {response.status_code}"
-            except Exception as exc:  # noqa: BLE001 - the sender thread must always end in delivered or "dropped"
+            except httpx.TransportError as exc:
+                if isinstance(exc, httpx.UnsupportedProtocol):  # deterministic: retrying cannot help
+                    return self._drop(url, payload, f"{type(exc).__name__}: {exc}")
                 last_error = f"{type(exc).__name__}: {exc}"
-        log.warning("callback dropped after retries",
-                    extra={"ctx": {"url": url, "payload": payload, "error": last_error}})
+            except Exception as exc:  # noqa: BLE001 - deterministic (e.g. InvalidURL); the thread must end "dropped"
+                return self._drop(url, payload, f"{type(exc).__name__}: {exc}")
+        return self._drop(url, payload, last_error, "callback dropped after retries")
+
+    def _drop(self, url: str, payload: dict, error: str | None, message: str = "callback dropped") -> bool:
+        log.warning(message, extra={"ctx": {"url": url, "payload": payload, "error": error}})
         return False

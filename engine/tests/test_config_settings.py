@@ -85,3 +85,15 @@ def test_duplicate_token_or_caller_fails_at_startup():
         load_config({**BASE_ENV, "LQTTS_TOKENS": "lq-tts:same,lq-studio:same"})
     with pytest.raises(ValueError, match="LQTTS_TOKENS: lq-tts is listed twice"):
         load_config({**BASE_ENV, "LQTTS_TOKENS": "lq-tts:tok-a,lq-tts:tok-b"})
+
+
+@pytest.mark.parametrize("entry", ["hooks.example.com:443", "[::1]", "https://hooks.example.com",
+                                   "hooks.example.com/cb", "hooks example.com", "user@hooks.example.com"])
+def test_callback_hosts_that_can_never_match_are_rejected(entry):
+    with pytest.raises(ValueError, match="LQTTS_CALLBACK_HOSTS: lq-studio: .*can never match"):
+        load_config({**BASE_ENV, "LQTTS_CALLBACK_HOSTS": f"lq-studio:ok.example|{entry}"})
+
+
+def test_callback_hosts_accept_bare_ipv6():
+    cfg = load_config({**BASE_ENV, "LQTTS_CALLBACK_HOSTS": "lq-studio:FD00::5"})
+    assert cfg.callback_hosts == {"lq-studio": frozenset({"fd00::5"})}
