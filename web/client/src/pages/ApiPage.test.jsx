@@ -105,6 +105,7 @@ describe('ApiPage', () => {
     await user.click(within(screen.getByTestId('api-key-confirm')).getByRole('button', { name: 'Cabut kunci' }));
     expect(api.revokeApiKey).toHaveBeenCalledWith('k1');
     expect(await screen.findByText('Belum ada kunci API')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 2, name: 'Kunci API' })).toHaveFocus();
   });
 
   it('lists webhook deliveries with their state', async () => {
@@ -121,12 +122,5 @@ describe('ApiPage', () => {
     expect(within(rows[0]).getByText('Gagal')).toBeInTheDocument();
     expect(within(rows[1]).getByText('Terkirim')).toBeInTheDocument();
     expect(within(rows[1]).getByRole('link', { name: 'job.done' })).toHaveAttribute('href', '/jobs/j1');
-  });
-
-  it('lists keys from a server that does not send deliveries yet', async () => {
-    api.apiKeys.mockResolvedValue({ keys: [KEY] });
-    renderRoutes(routes, { path: '/api-keys', me: PRO });
-    expect(await screen.findByTestId('api-key-row')).toHaveAttribute('data-key-id', 'k1');
-    expect(screen.getByText('Belum ada webhook yang dikirim.')).toBeInTheDocument();
   });
 });

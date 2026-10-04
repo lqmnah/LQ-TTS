@@ -58,17 +58,15 @@ function ApiKeys() {
   if (data.data === undefined) {
     return <Notice tone="danger" action={<Button size="sm" loading={data.loading} onClick={data.reload}>{t('common.retry')}</Button>}>{errorText(t, data.error)}</Notice>;
   }
-  // The deliveries list arrives with the webhook sender; until then the server lists keys only.
-  const keys = data.data.keys ?? [];
-  const deliveries = data.data.deliveries ?? [];
-  const removeKey = (id) => data.setData((d) => ({
-    ...d,
-    keys: (d.keys ?? []).filter((k) => k.id !== id),
-    deliveries: (d.deliveries ?? []).filter((x) => x.keyId !== id),
-  }));
+  const { keys, deliveries } = data.data;
+  const removeKey = (id) => {
+    data.setData((d) => ({ ...d, keys: d.keys.filter((k) => k.id !== id), deliveries: d.deliveries.filter((x) => x.keyId !== id) }));
+    // The revoked row and its confirm leave the page; focus lands on the list heading, not on <body>.
+    keysHeadingRef.current?.focus();
+  };
   const addKey = (made) => {
     setCreated(made);
-    data.setData((d) => ({ ...d, keys: [listed(made), ...(d.keys ?? [])] }));
+    data.setData((d) => ({ ...d, keys: [listed(made), ...d.keys] }));
   };
   const closePanel = () => {
     setCreated(null);

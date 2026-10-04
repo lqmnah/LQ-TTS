@@ -73,12 +73,13 @@ export default function AppShell() {
             key={item.to}
             to={item.to}
             end={item.end}
-            className={({ isActive }) => `flex h-[63px] min-w-0 flex-col items-center justify-center gap-1 px-1 text-xs font-medium transition-colors duration-150 active:scale-[0.98] motion-reduce:active:scale-100 ${active(item, isActive) ? 'text-ink' : 'text-muted'}`}
+            className={({ isActive }) => `flex h-[63px] min-w-0 flex-col items-center justify-start gap-1 px-1 pt-2 text-xs font-medium transition-colors duration-150 active:scale-[0.98] motion-reduce:active:scale-100 ${active(item, isActive) ? 'text-ink' : 'text-muted'}`}
           >
             {({ isActive }) => (
               <>
                 <item.icon size={22} weight={active(item, isActive) ? 'fill' : 'regular'} aria-hidden className={active(item, isActive) ? 'text-accent' : ''} />
-                <span className="text-center leading-tight">{t(item.key)}</span>
+                {/* Top-aligned so every icon shares one line when a label wraps; 8 + 22 + 4 + 2 x 14 px fits the 63 px tab. */}
+                <span className="text-center leading-[14px]">{t(item.key)}</span>
               </>
             )}
           </NavLink>
