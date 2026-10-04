@@ -2,6 +2,7 @@ import AppShell from './components/AppShell.jsx';
 import RequireSession from './components/RequireSession.jsx';
 import ApiPage from './pages/ApiPage.jsx';
 import CreditsPage from './pages/CreditsPage.jsx';
+import DevelopersPage from './pages/DevelopersPage.jsx';
 import HistoryPage from './pages/HistoryPage.jsx';
 import JobPage from './pages/JobPage.jsx';
 import LoginPage from './pages/LoginPage.jsx';
@@ -11,6 +12,7 @@ import VoicesPage from './pages/VoicesPage.jsx';
 
 export const routes = [
   { path: '/login', element: <LoginPage /> },
+  { path: '/developers', element: <DevelopersPage /> },
   {
     path: '/',
     element: <RequireSession><AppShell /></RequireSession>,
