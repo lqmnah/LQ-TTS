@@ -8,7 +8,7 @@ import { useI18n } from '../i18n/index.jsx';
 import { api, openJobEvents, urls } from '../lib/api.js';
 import { errorText, jobFailureText } from '../lib/errors.js';
 import { formatDateTime, formatDuration } from '../lib/format.js';
-import { charCount, creditsFor, formatNumber } from '../lib/pricing.js';
+import { MAX_SENTENCE_CHARS, charCount, creditsFor, formatNumber } from '../lib/pricing.js';
 import { TERMINAL, doneCount, progressReducer } from '../lib/progress.js';
 import { claimAudio, releaseAudio } from '../lib/useAudioToggle.js';
 import { useSession } from '../lib/session.jsx';
@@ -334,12 +334,13 @@ function SentenceRow({ jobId, sentence, live, arrived, audioVersion, editable, o
   const finished = status === 'done' || status === 'needs_review';
   const n = sentence.idx + 1;
   const nextText = text.trim();
+  const tooLong = charCount(nextText) > MAX_SENTENCE_CHARS;
   const credits = creditsFor(charCount(nextText));
   const base = `s${sentence.idx}`;
 
   async function regenerate(event) {
     event.preventDefault();
-    if (!nextText) return;
+    if (!nextText || tooLong) return;
     setBusy(true);
     setError(null);
     try {
@@ -394,14 +395,15 @@ function SentenceRow({ jobId, sentence, live, arrived, audioVersion, editable, o
         {editing ? (
           <form id={`${base}-editor`} onSubmit={regenerate} className="mt-3 flex flex-col gap-4 rounded-control bg-surface-2 p-4">
             <Field id={`${base}-text`} label={t('job.sentence.text')} help={t('job.sentence.one_sentence')}>
-              <textarea ref={textRef} id={`${base}-text`} rows={2} maxLength={400} value={text} onChange={(e) => setText(e.target.value)} aria-describedby={`${base}-text-help`} className={`${inputClass} py-2 leading-relaxed`} />
+              <textarea ref={textRef} id={`${base}-text`} rows={2} value={text} onChange={(e) => setText(e.target.value)} aria-describedby={`${base}-text-help`} className={`${inputClass} py-2 leading-relaxed`} />
             </Field>
             <Field id={`${base}-style`} label={t('job.sentence.style')}>
               <input id={`${base}-style`} value={style} maxLength={200} placeholder={t('job.sentence.style_placeholder')} onChange={(e) => setStyle(e.target.value)} className={`${inputClass} h-11`} />
             </Field>
-            {error ? <Notice tone="danger">{error.code === 'invalid_request' ? t('job.sentence.one_sentence') : errorText(t, error)}</Notice> : null}
+            {tooLong ? <Notice tone="danger">{t('job.sentence.one_sentence')}</Notice> : null}
+            {error && !tooLong ? <Notice tone="danger">{error.code === 'invalid_request' ? t('job.sentence.one_sentence') : errorText(t, error)}</Notice> : null}
             <div className="flex flex-wrap items-center gap-3">
-              <Button type="submit" variant="primary" icon={ArrowsClockwiseIcon} loading={busy} disabled={!nextText || !editable}>{t('job.sentence.regenerate')}</Button>
+              <Button type="submit" variant="primary" icon={ArrowsClockwiseIcon} loading={busy} disabled={!nextText || tooLong || !editable}>{t('job.sentence.regenerate')}</Button>
               <Button variant="ghost" disabled={busy} onClick={() => setEditing(false)}>{t('common.cancel')}</Button>
               <span className="text-sm text-muted">{tn('job.sentence.regenerate_price', credits, { count: formatNumber(credits, lang) })}</span>
             </div>

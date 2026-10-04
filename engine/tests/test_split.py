@@ -125,6 +125,14 @@ def test_capped_tail_is_balanced_instead_of_left_tiny():
     assert " ".join(pieces).split() == text.split()
 
 
+def test_balanced_cut_keeps_a_long_token_whole_past_the_midpoint():
+    url = "https://contoh.id/" + "a" * 230
+    text = url + " " + " ".join(["kata"] * 35) + " ya"
+    pieces = [u.text for u in split_script(text)]
+    assert [len(p) for p in pieces] == [248, 177]
+    assert pieces[0] == url
+
+
 def test_capped_punctuation_tail_never_stands_alone():
     text = "x" * 400 + "."  # a hard cut would leave a lone "."
     pieces = [u.text for u in split_script(text)]

@@ -191,14 +191,33 @@ describe('JobPage', () => {
     expect(await within(row).findByRole('alert')).toHaveTextContent('Isi tepat satu kalimat, maksimal 400 karakter.');
   });
 
-  it('limits the sentence editor to 400 characters', async () => {
+  it('counts the sentence limit in code points, so an emoji does not block a 400-character sentence', async () => {
+    const prefilled = `${'a'.repeat(397)}😀.`; // 399 code points, 400 UTF-16 units
+    api.job.mockResolvedValue(job({ status: 'done', files: FILES }));
+    api.sentences.mockResolvedValue([sentence(0, 'done', prefilled)]);
+    api.regenerate.mockResolvedValue({ revision: 2, credits: 4 });
+    const user = userEvent.setup();
+    renderRoutes(routes, { path: '/jobs/j1' });
+    const row = await screen.findByTestId('sentence-0');
+    await user.click(within(row).getByRole('button', { name: 'Ubah' }));
+    const box = within(row).getByLabelText('Teks kalimat');
+    await user.type(box, 'b');
+    expect(box).toHaveValue(`${prefilled}b`);
+    await user.click(within(row).getByRole('button', { name: 'Buat ulang' }));
+    expect(api.regenerate).toHaveBeenCalledWith('j1', 0, { text: `${prefilled}b` });
+  });
+
+  it('blocks a sentence longer than 400 code points with the one-sentence message', async () => {
     api.job.mockResolvedValue(job({ status: 'done', files: FILES }));
     api.sentences.mockResolvedValue([sentence(0, 'done')]);
     const user = userEvent.setup();
     renderRoutes(routes, { path: '/jobs/j1' });
     const row = await screen.findByTestId('sentence-0');
     await user.click(within(row).getByRole('button', { name: 'Ubah' }));
-    expect(within(row).getByRole('textbox', { name: 'Teks kalimat' })).toHaveAttribute('maxLength', '400');
+    fireEvent.change(within(row).getByLabelText('Teks kalimat'), { target: { value: `${'a'.repeat(399)}😀.` } });
+    expect(within(row).getByRole('alert')).toHaveTextContent('Isi tepat satu kalimat, maksimal 400 karakter.');
+    expect(within(row).getByRole('button', { name: 'Buat ulang' })).toBeDisabled();
+    expect(api.regenerate).not.toHaveBeenCalled();
   });
 
   it('downloads the files the server has while a newer revision is running', async () => {

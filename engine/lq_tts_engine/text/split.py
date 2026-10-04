@@ -52,13 +52,17 @@ def _tiny(tail: str, limit: int) -> bool:
 
 
 def _balanced_cut(rest: str, limit: int) -> int:
-    """Cut for the last two pieces near the middle, both within limit: soft break, else space, else hard."""
+    """Cut for the last two pieces near the middle, both within limit: soft break, else the nearest space before
+    the middle, else the first space after it (a long token such as a URL stays whole), else hard."""
     lo, target = max(len(rest) - limit, 1), len(rest) // 2
     soft = [m.end() for m in _SOFT_BREAK.finditer(rest, lo, target + 1) if m.end() <= target]
     if soft:
         return soft[-1]
     space = rest.rfind(" ", lo, target)
-    return space + 1 if space >= lo else target
+    if space >= lo:
+        return space + 1
+    space = rest.find(" ", target, limit + 1)
+    return space + 1 if space >= 0 else target
 
 
 def _cap(sentence: str, limit: int = MAX_UNIT_CHARS) -> list[str]:

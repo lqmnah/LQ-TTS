@@ -1,5 +1,6 @@
 export const CREDITS_PER_1K_CHARS = 10;
 export const RUPIAH_PER_CREDIT = 100;
+export const MAX_SENTENCE_CHARS = 400; // = server maxSentenceChars and engine MAX_UNIT_CHARS, in code points
 
 const LOCALES = { id: 'id-ID', en: 'en-US' };
 
