@@ -37,6 +37,7 @@ describe('migrate', () => {
     const { rows } = await pool.query('SELECT name FROM schema_migrations ORDER BY name');
     expect(rows.map((r) => r.name)).toEqual([
       '001_init.sql', '002_regen_lease.sql', '003_upload_leases.sql', '004_charge_claims.sql', '005_session_tv.sql', '006_voice_profiles.sql',
+      '007_public_api.sql',
     ]);
   });
 
@@ -50,5 +51,19 @@ describe('migrate', () => {
     );
     await insert();
     await expect(insert()).rejects.toMatchObject({ code: '23505' });
+  });
+
+  it('labels existing rows web and keeps profiles off the API by default', async () => {
+    await pool.query(`INSERT INTO jobs (id, user_id, voice_id, voice_name, title, chars, status) VALUES (gen_random_uuid(), 'u1', gen_random_uuid(), 'v', 't', 1, 'queued')`);
+    const { rows: [job] } = await pool.query('SELECT source, api_key_id, webhook_url FROM jobs LIMIT 1');
+    expect(job).toEqual({ source: 'web', api_key_id: null, webhook_url: null });
+    const { rows: [charge] } = await pool.query(`SELECT source FROM charges WHERE hold_id = 'tts:k:r1'`);
+    expect(charge.source).toBe('web');
+    await expect(pool.query(`INSERT INTO jobs (id, user_id, voice_id, voice_name, title, chars, status, source) VALUES (gen_random_uuid(), 'u1', gen_random_uuid(), 'v', 't', 1, 'queued', 'cli')`))
+      .rejects.toMatchObject({ code: '23514' });
+    const { rows: [column] } = await pool.query(
+      `SELECT column_default FROM information_schema.columns WHERE table_schema = $1 AND table_name = 'voice_profiles' AND column_name = 'api_allowed'`, [schema],
+    );
+    expect(column.column_default).toBe('false');
   });
 });

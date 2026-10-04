@@ -13,6 +13,7 @@ import { startFakeLqStudio } from './fakes/fake-lqstudio.js';
 export const LQ_TOKEN = 'lq-test-token-'.padEnd(40, 'x');
 export const ENGINE_TOKEN = 'engine-test-token';
 export const CALLBACK_SECRET = 'callback-test-secret';
+export const API_ENC_KEY = Buffer.alloc(32, 7).toString('base64');
 
 const user = (id, extra = {}) => ({
   id, name: id, email: `${id}@example.com`, username: id, password: 'secret-pass', totp: null,
@@ -65,6 +66,7 @@ export async function startHarness({ env = {}, app: appOptions = {} } = {}) {
     LQSTUDIO_PUBLIC_URL: 'https://demo.lq-studio.com',
     COOKIE_SECURE: 'false',
     CLIENT_DIST: '/nonexistent-lq-tts-client-dist',
+    API_ENC_KEY,
     ...env,
   });
   const logs = [];

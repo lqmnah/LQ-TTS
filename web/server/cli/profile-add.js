@@ -218,7 +218,7 @@ export async function runProfileAdd({
 
 if (import.meta.main) {
   const config = loadConfig();
-  const secrets = [config.engineToken, config.lqstudioToken, config.engineCallbackSecret, config.databaseUrl];
+  const secrets = [config.engineToken, config.lqstudioToken, config.engineCallbackSecret, config.databaseUrl, config.apiEncKey.toString('base64')];
   const pool = createPool(config.databaseUrl, config.dbSchema, { max: 2 });
   try {
     await migrate(pool, config.dbSchema); // a no-op once the server has started; needed when the CLI runs first (e2e)

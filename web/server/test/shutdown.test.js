@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { testDatabaseUrl } from './db-url.js';
-import { CALLBACK_SECRET, ENGINE_TOKEN, LQ_TOKEN, USERS, startHarness } from './helpers.js';
+import { API_ENC_KEY, CALLBACK_SECRET, ENGINE_TOKEN, LQ_TOKEN, USERS, startHarness } from './helpers.js';
 
 const INDEX = fileURLToPath(new URL('../index.js', import.meta.url));
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -25,6 +25,7 @@ async function boot(h) {
       LQSTUDIO_PUBLIC_URL: 'https://demo.lq-studio.com',
       COOKIE_SECURE: 'false',
       CLIENT_DIST: '/nonexistent-lq-tts-client-dist',
+      API_ENC_KEY,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });

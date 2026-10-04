@@ -11,6 +11,7 @@ const base = {
   LQSTUDIO_URL: 'http://100.80.128.19:3112/',
   LQSTUDIO_TOKEN: 'x'.repeat(32),
   LQSTUDIO_PUBLIC_URL: 'https://demo.lq-studio.com/',
+  API_ENC_KEY: Buffer.alloc(32, 1).toString('base64'),
 };
 
 describe('loadConfig', () => {
@@ -61,5 +62,25 @@ describe('loadConfig', () => {
     for (const bad of ['abc', '0', '95MB', '99614721', '1.5']) {
       expect(() => loadConfig({ ...base, MAX_UPLOAD_BYTES: bad })).toThrow('MAX_UPLOAD_BYTES');
     }
+  });
+
+  it('requires API_ENC_KEY to be 32 bytes in base64 and never echoes it', () => {
+    for (const bad of ['short', Buffer.alloc(16, 1).toString('base64'), Buffer.alloc(33, 1).toString('base64'), `${'A'.repeat(43)}!`]) {
+      let message = '';
+      try {
+        loadConfig({ ...base, API_ENC_KEY: bad });
+      } catch (err) {
+        message = err.message;
+      }
+      expect(message).toMatch(/^API_ENC_KEY must be 32 bytes in base64/);
+      expect(message).not.toContain(bad);
+    }
+    expect(loadConfig(base).apiEncKey).toEqual(Buffer.alloc(32, 1));
+  });
+
+  it('allows loopback webhooks only for local runs without Secure cookies', () => {
+    expect(loadConfig(base).webhookAllowLoopback).toBe(false);
+    expect(loadConfig({ ...base, COOKIE_SECURE: 'false', WEBHOOK_ALLOW_LOOPBACK: 'true' }).webhookAllowLoopback).toBe(true);
+    expect(() => loadConfig({ ...base, WEBHOOK_ALLOW_LOOPBACK: 'true' })).toThrow('WEBHOOK_ALLOW_LOOPBACK');
   });
 });

@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseEncKey } from './lib/crypto-box.js';
 
 const WEB_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -35,6 +36,12 @@ export function loadConfig(env = process.env) {
   const lqstudioToken = req('LQSTUDIO_TOKEN');
   if (lqstudioToken.length < 32) throw new Error('LQSTUDIO_TOKEN must be at least 32 characters');
   const publicUrl = trimSlash(req('LQSTUDIO_PUBLIC_URL'));
+  const cookieSecure = env.COOKIE_SECURE !== 'false';
+  const webhookAllowLoopback = env.WEBHOOK_ALLOW_LOOPBACK === 'true';
+  // Loopback webhooks are for the local e2e receiver only; every deployed container runs with Secure cookies.
+  if (webhookAllowLoopback && cookieSecure) {
+    throw new Error('WEBHOOK_ALLOW_LOOPBACK=true is for local runs only and needs COOKIE_SECURE=false');
+  }
   return Object.freeze({
     host: env.HOST || '127.0.0.1',
     port: wholeNumber(env, 'PORT', 8750, 0, 65535),
@@ -49,10 +56,12 @@ export function loadConfig(env = process.env) {
     topupUrl: `${publicUrl}/upgrade-plan`,
     verifyUrl: `${publicUrl}/login`,
     signupUrl: env.LQS_SIGNUP_URL || `${publicUrl}/signup`,
-    cookieSecure: env.COOKIE_SECURE !== 'false',
+    cookieSecure,
     clientDist: path.resolve(env.CLIENT_DIST || path.join(WEB_DIR, 'client', 'dist')),
     maxUploadBytes: wholeNumber(env, 'MAX_UPLOAD_BYTES', 99614720, 1, 99614720), // 95 MB: Cloudflare rejects bodies over 100 MB
     reconcileIntervalMs: wholeNumber(env, 'RECONCILE_INTERVAL_MS', 60000, 1000, 2147483647),
+    apiEncKey: parseEncKey(req('API_ENC_KEY')),
+    webhookAllowLoopback,
     ...PRICING,
   });
 }

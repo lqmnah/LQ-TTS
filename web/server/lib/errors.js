@@ -1,6 +1,7 @@
 export const STATUS = Object.freeze({
   invalid_request: 400,
   consent_required: 400,
+  invalid_webhook_url: 400,
   unauthorized: 401,
   invalid_credentials: 401,
   invalid_code: 401,
@@ -8,24 +9,29 @@ export const STATUS = Object.freeze({
   suspended: 403,
   needs_verification: 403,
   voice_limit_reached: 403,
+  plan_required: 403,
+  key_limit_reached: 403,
   not_found: 404,
   not_regeneratable: 409,
   voice_not_ready: 409,
+  idempotency_conflict: 409,
   too_large: 413,
   unsupported_audio: 415,
   rate_limited: 429,
+  too_many_jobs: 429,
   internal_error: 500,
   lqstudio_unavailable: 503,
   engine_unavailable: 503,
 });
 
 export class ApiError extends Error {
-  constructor(code, message = code, { status, headers } = {}) {
+  constructor(code, message = code, { status, headers, details } = {}) {
     super(message);
     this.name = 'ApiError';
     this.code = code;
     this.status = status ?? STATUS[code] ?? 500;
     this.headers = headers ?? {};
+    this.details = details ?? {};
   }
 }
 
@@ -57,6 +63,6 @@ export function errorHandler(log) {
         apiErr = new ApiError('internal_error', 'internal error');
       }
     }
-    res.set(apiErr.headers).status(apiErr.status).json({ error: { code: apiErr.code, message: apiErr.message } });
+    res.set(apiErr.headers).status(apiErr.status).json({ error: { ...apiErr.details, code: apiErr.code, message: apiErr.message } });
   };
 }

@@ -15,7 +15,11 @@ export function lqError(err) {
       const wait = Number(err.body?.retryAfter) || 60;
       return new ApiError('rate_limited', `too many attempts, try again in ${wait} s`, { headers: { 'retry-after': String(wait) } });
     }
-    if (LQ_MESSAGES[err.code]) return new ApiError(err.code, LQ_MESSAGES[err.code]);
+    if (LQ_MESSAGES[err.code]) {
+      // LQ-Studio's 402 carries the balance (contract C1); /v1 also adds topupUrl.
+      const balance = err.code === 'insufficient_credits' && Number.isFinite(err.body?.balance) ? { balance: err.body.balance } : {};
+      return new ApiError(err.code, LQ_MESSAGES[err.code], { details: balance });
+    }
   }
   return new ApiError('lqstudio_unavailable', 'LQ-Studio is temporarily unavailable');
 }
