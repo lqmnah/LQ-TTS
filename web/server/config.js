@@ -13,12 +13,15 @@ export const PRICING = Object.freeze({
 });
 
 const trimSlash = (url) => url.replace(/\/+$/, '');
-const intervalMs = (raw) => {
-  const ms = Number(raw || 60000);
-  if (!Number.isInteger(ms) || ms < 1000 || ms > 2147483647 || (raw && !/^\d+$/.test(raw))) {
-    throw new Error('RECONCILE_INTERVAL_MS must be a whole number of milliseconds, at least 1000 and at most 2147483647');
+// Whole decimal numbers only: Number() turns 'abc' into NaN and '1e3' into 1000 without complaint.
+const wholeNumber = (env, key, fallback, min, max) => {
+  const raw = env[key];
+  if (raw === undefined || raw === '') return fallback;
+  const n = Number(raw);
+  if (!/^\d+$/.test(raw) || !Number.isSafeInteger(n) || n < min || n > max) {
+    throw new Error(`${key} must be a whole number, at least ${min} and at most ${max}`);
   }
-  return ms;
+  return n;
 };
 export function loadConfig(env = process.env) {
   const req = (key) => {
@@ -33,7 +36,7 @@ export function loadConfig(env = process.env) {
   const publicUrl = trimSlash(req('LQSTUDIO_PUBLIC_URL'));
   return Object.freeze({
     host: env.HOST || '127.0.0.1',
-    port: Number(env.PORT || 8750),
+    port: wholeNumber(env, 'PORT', 8750, 0, 65535),
     databaseUrl: req('DATABASE_URL'),
     dbSchema,
     engineUrl: trimSlash(req('ENGINE_URL')),
@@ -47,8 +50,8 @@ export function loadConfig(env = process.env) {
     signupUrl: env.LQS_SIGNUP_URL || `${publicUrl}/signup`,
     cookieSecure: env.COOKIE_SECURE !== 'false',
     clientDist: path.resolve(env.CLIENT_DIST || path.join(WEB_DIR, 'client', 'dist')),
-    maxUploadBytes: Number(env.MAX_UPLOAD_BYTES || 99614720), // 95 MB: Cloudflare rejects bodies over 100 MB
-    reconcileIntervalMs: intervalMs(env.RECONCILE_INTERVAL_MS),
+    maxUploadBytes: wholeNumber(env, 'MAX_UPLOAD_BYTES', 99614720, 1, 99614720), // 95 MB: Cloudflare rejects bodies over 100 MB
+    reconcileIntervalMs: wholeNumber(env, 'RECONCILE_INTERVAL_MS', 60000, 1000, 2147483647),
     ...PRICING,
   });
 }

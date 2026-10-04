@@ -29,6 +29,16 @@ export class ApiError extends Error {
   }
 }
 
+// body-parser failures by err.type: [code, message, status]. Anything else is a bug and logs as unhandled.
+const BODY_ERRORS = Object.freeze({
+  'entity.parse.failed': ['invalid_request', 'malformed JSON body', 400],
+  'entity.too.large': ['too_large', 'request body too large', 413],
+  'charset.unsupported': ['invalid_request', 'unsupported body charset or encoding', 415],
+  'encoding.unsupported': ['invalid_request', 'unsupported body charset or encoding', 415],
+  'request.aborted': ['invalid_request', 'request body was cut off', 400],
+  'request.size.invalid': ['invalid_request', 'request body was cut off', 400],
+});
+
 export function errorHandler(log) {
   // Express recognises error middleware by its four parameters.
   // eslint-disable-next-line no-unused-vars
@@ -39,9 +49,10 @@ export function errorHandler(log) {
     }
     let apiErr = err;
     if (!(err instanceof ApiError)) {
-      if (err?.type === 'entity.parse.failed') apiErr = new ApiError('invalid_request', 'malformed JSON body');
-      else if (err?.type === 'entity.too.large') apiErr = new ApiError('too_large', 'request body too large');
-      else {
+      const known = BODY_ERRORS[err?.type];
+      if (known) {
+        apiErr = new ApiError(known[0], known[1], { status: known[2] });
+      } else {
         log.error({ event: 'unhandled_error', path: req.path, error: String(err?.stack ?? err) }, 'unhandled error');
         apiErr = new ApiError('internal_error', 'internal error');
       }

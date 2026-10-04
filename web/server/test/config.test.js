@@ -52,4 +52,14 @@ describe('loadConfig', () => {
       expect(() => loadConfig({ ...base, RECONCILE_INTERVAL_MS: bad })).toThrow('RECONCILE_INTERVAL_MS');
     }
   });
+  it('rejects a PORT or MAX_UPLOAD_BYTES that is not a whole number in range', () => {
+    expect(loadConfig({ ...base, PORT: '0' }).port).toBe(0);
+    expect(loadConfig({ ...base, MAX_UPLOAD_BYTES: '1048576' }).maxUploadBytes).toBe(1048576);
+    for (const bad of ['abc', '-1', '80.5', '65536', '1e3']) {
+      expect(() => loadConfig({ ...base, PORT: bad })).toThrow('PORT');
+    }
+    for (const bad of ['abc', '0', '95MB', '99614721', '1.5']) {
+      expect(() => loadConfig({ ...base, MAX_UPLOAD_BYTES: bad })).toThrow('MAX_UPLOAD_BYTES');
+    }
+  });
 });
