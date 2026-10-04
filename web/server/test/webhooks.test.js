@@ -300,17 +300,25 @@ describe('webhooks', () => {
     for (const jobId of slow) expect(await delivery(jobId)).toMatchObject({ state: 'pending', attempts: 1, last_error: 'timeout' });
   });
 
-  it('stop() aborts a send in flight and counts it as a failed attempt', async () => {
+  it('stop() aborts sends in flight and only releases their leases: no attempt is used up', async () => {
     receiver.answer(() => null);
     const jobId = await insertDelivery(`${receiver.base}/slow`);
+    const last = await h.ctx.apiKeys.create('cici', { name: 'last try', tv: 0 });
+    const lastTry = await insertDelivery(`${receiver.base}/slow`, { keyId: last.row.id, userId: 'cici' });
+    await h.pool.query('UPDATE webhook_deliveries SET attempts = 3 WHERE job_id = $1', [lastTry]); // a failure now would drop it
     const worker = createWebhooks(h.ctx, { timeoutMs: 10_000 });
     const running = worker.runOnce();
-    await until(() => receiver.hits.length === 1);
+    await until(() => receiver.hits.length === 2);
     const stopping = Date.now();
     await worker.stop();
     expect(Date.now() - stopping).toBeLessThan(1000);
-    expect(await running).toEqual({ handled: 1 });
-    expect(await delivery(jobId)).toMatchObject({ state: 'pending', attempts: 1, last_status: null, last_error: 'shutdown' });
+    expect(await running).toEqual({ handled: 2 });
+    const untouched = { state: 'pending', last_status: null, last_error: null, sending_until: null, finished_at: null };
+    expect(await delivery(jobId)).toMatchObject({ ...untouched, attempts: 0 });
+    expect(await delivery(lastTry)).toMatchObject({ ...untouched, attempts: 3 });
+    expect(h.logs).not.toContainEqual(expect.objectContaining({ event: 'webhook_dropped', jobId: lastTry }));
+    // still due: park them so later tests start with nothing to send
+    await h.pool.query(`UPDATE webhook_deliveries SET next_attempt_at = now() + interval '1 hour' WHERE job_id = ANY($1)`, [[jobId, lastTry]]);
   });
 
   it('skips a row another worker holds until its lease runs out', async () => {

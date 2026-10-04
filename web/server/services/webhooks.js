@@ -86,7 +86,7 @@ export function createWebhooks(ctx, { timeoutMs = DELIVERY_TIMEOUT_MS, lookup } 
     return claim;
   }
 
-  // Aborted by stop(): sends in flight end at once and count as failed attempts.
+  // Aborted by stop(): sends in flight end at once and their rows go back untouched, due again on the next start.
   let halt = new AbortController();
   const unlessHalted = (promise, signal) => new Promise((resolve, reject) => {
     const onAbort = () => reject(signal.reason);
@@ -177,7 +177,12 @@ export function createWebhooks(ctx, { timeoutMs = DELIVERY_TIMEOUT_MS, lookup } 
           log.error({ event: 'webhooks_failed', deliveryId: String(row.id), error: String(err?.stack ?? err) }, 'webhook send failed');
           return { error: 'internal' };
         });
-      await record(row, outcome);
+      if (outcome === SHUTDOWN) {
+        // Cut off by stop(), not refused by the receiver: hand the row back without using up an attempt.
+        await pool.query('UPDATE webhook_deliveries SET sending_until = NULL WHERE id = $1', [row.id]);
+      } else {
+        await record(row, outcome);
+      }
     }
     return handled;
   }
@@ -215,7 +220,7 @@ export function createWebhooks(ctx, { timeoutMs = DELIVERY_TIMEOUT_MS, lookup } 
       timer.unref();
       safeRun();
     },
-    // Ends the loops and aborts sends in flight (recorded as failed attempts, last_error 'shutdown').
+    // Ends the loops and aborts sends in flight; their rows keep their attempts and are due again at once.
     async stop() {
       stopped = true;
       clearInterval(timer);

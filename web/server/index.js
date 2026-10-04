@@ -49,7 +49,7 @@ async function shutdown(signal) {
   clearTimeout(deadline);
   clearInterval(sweep);
   await reconciler.stop();
-  await ctx.webhooks.stop(); // aborts sends in flight; they are recorded as failed attempts and retried later
+  await ctx.webhooks.stop(); // aborts sends in flight; their rows keep their attempts and go out after the restart
   await pool.end();
   process.exit(0);
 }
