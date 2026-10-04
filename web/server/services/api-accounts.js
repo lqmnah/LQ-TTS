@@ -8,7 +8,8 @@ const MAX_CACHED = 10_000;
  * LQ-Studio's view of API callers (plan, paid, suspension, verification, tokenVersion), cached per user for at most
  * ME_CACHE_MS like web sessions, in memory (one web process per environment). While LQ-Studio is unreachable the
  * cached copy is served and asked again only after OUTAGE_RETRY_MS. `get` answers null when LQ-Studio no longer
- * knows the user. `cache` is exposed for tests and operations (clearing it forces a re-read).
+ * knows the user. `evict` drops a user's copy so the next `get` asks LQ-Studio again. `cache` is exposed for tests
+ * and operations (clearing it forces a re-read).
  */
 export function createApiAccounts({ lqstudio }, { now = Date.now } = {}) {
   const cache = new Map(); // userId → { user, at }
@@ -36,5 +37,5 @@ export function createApiAccounts({ lqstudio }, { now = Date.now } = {}) {
     return user;
   }
 
-  return { get, cache };
+  return { get, evict: (userId) => cache.delete(userId), cache };
 }

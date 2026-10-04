@@ -178,6 +178,22 @@ describe('/v1 authentication and account checks', () => {
     expect(h.logs).toContainEqual(expect.objectContaining({ event: 'api_key_auto_revoked', userId: 'cici', reason: 'plan' }));
   });
 
+  it('serves a new key at once after a revoking account problem is fixed, without waiting out the cache', async () => {
+    for (const [broken, fixed] of [
+      [{ suspended: true }, { suspended: false }],
+      [{ plan: 'free', paid: false }, { plan: 'ultra', paid: true }],
+    ]) {
+      h.ctx.apiAccounts.cache.clear(); // LQ-Studio's broken copy is the one read and cached
+      const old = await h.apiKey('cici');
+      Object.assign(h.lq.state.users.get('cici'), broken);
+      expect((await h.api(old).get('/v1/voices')).status).toBe(403);
+      Object.assign(h.lq.state.users.get('cici'), fixed);
+      const fresh = await h.apiKey('cici');
+      expect((await h.api(fresh).get('/v1/voices')).status).toBe(200);
+      expect((await h.api(old).get('/v1/voices')).status).toBe(401);
+    }
+  });
+
   it('revokes keys made before a password change or log-out-everywhere, keeps newer ones', async () => {
     const before = await h.apiKey('cici', { tv: 0 });
     h.lq.bumpTv('cici');

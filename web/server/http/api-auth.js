@@ -27,6 +27,7 @@ export function requireApiKey({ apiKeys, apiAccounts, apiLimiter }) {
     }
     if (user.suspended) {
       await apiKeys.autoRevoke(userId, 'suspended');
+      apiAccounts.evict(userId); // a key made after the suspension is lifted must not meet this stale copy
       throw new ApiError('suspended', 'this account is suspended');
     }
     if (!user.verified) throw new ApiError('needs_verification', 'finish verifying your email and phone on LQ-Studio');
@@ -37,6 +38,7 @@ export function requireApiKey({ apiKeys, apiAccounts, apiLimiter }) {
     }
     if (!user.paid) {
       await apiKeys.autoRevoke(userId, 'plan');
+      apiAccounts.evict(userId); // likewise after a renewal
       throw new ApiError('plan_required', 'the API needs a Pro, Ultra or Sultan plan');
     }
     await apiKeys.touch(key);
