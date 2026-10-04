@@ -1,4 +1,5 @@
 import { isEngineNotFound } from '../lib/upstream-errors.js';
+import { HELD_MIN_AGE_MS } from './charges.js';
 
 // Resolves held charges the callback path left behind. Rows with job_id NULL are holds whose create never wrote a
 // job row (or whose outcome was unknown); decide() refunds them once they are old enough.
@@ -22,9 +23,9 @@ export function createReconciler({ pool, engine, charges, jobsRepo, log }, { int
   async function pass() {
     // Rows that keep failing go last, so they cannot starve newer charges out of the batch.
     const { rows } = await pool.query(
-      `SELECT * FROM charges WHERE state = 'held' AND created_at < now() - interval '2 minutes'
+      `SELECT * FROM charges WHERE state = 'held' AND created_at < now() - make_interval(secs => $2::double precision / 1000)
        ORDER BY (flagged_at IS NOT NULL), attempts, id LIMIT $1`,
-      [batchSize],
+      [batchSize, HELD_MIN_AGE_MS],
     );
     const seen = new Map();
     let checked = 0;

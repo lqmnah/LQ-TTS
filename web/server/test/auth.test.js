@@ -198,4 +198,11 @@ describe('auth, sessions and /api/me', () => {
     expect(res.status).toBe(200);
     expect(res.body.voiceCount).toBeNull();
   });
+  it('revokes the session a new login replaces', async () => {
+    const old = await h.login();
+    const res = await login({ identifier: USERS.ana.email, password: USERS.ana.password }, { cookie: old });
+    expect(res.body.status).toBe('ok');
+    expect((await h.as(old).get('/api/me')).status).toBe(401);
+    expect((await h.as(sessionCookie(res)).get('/api/me')).status).toBe(200);
+  });
 });

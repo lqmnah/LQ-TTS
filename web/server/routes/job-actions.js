@@ -70,7 +70,7 @@ export function jobActionsRouter(ctx) {
     const base = `tts:${job.id}:r${revision}:s${idx}`;
     // Serialized per job from the guard until the charge carries the engine's revision: two sentences passing the
     // guard together would leave the engine-rejected one held at the accepted one's revision.
-    await withLease(job.id, async () => {
+    const accepted = await withLease(job.id, async () => {
       // Job-wide: decide() ignores sentence_idx, so a held charge for any sentence at a newer revision would be
       // judged by this regeneration's outcome.
       const { rowCount: held } = await pool.query(
@@ -100,8 +100,10 @@ export function jobActionsRouter(ctx) {
         await pool.query(`UPDATE charges SET revision = $2 WHERE id = $1 AND state = 'held'`, [charge.id, out.revision]);
       }
       await jobsRepo.applyEngineState(job.id, { status: 'queued', revision: out.revision });
-      res.status(202).json({ revision: out.revision, credits });
+      return { revision: out.revision, credits };
     });
+    // Answered after withLease's finally cleared the lease, so a cancel sent right after this 202 is not busy.
+    res.status(202).json(accepted);
   });
 
   router.post('/jobs/:id/cancel', async (req, res) => {

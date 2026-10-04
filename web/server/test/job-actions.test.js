@@ -338,4 +338,21 @@ describe('regenerate, cancel and delete', () => {
     expect(h.engine.state.jobs.get(id).status).toBe('done');
     expect((await charges(id))[0].state).toBe('held');
   });
+  it('answers a regeneration only after its lease is released, so an immediate cancel goes through', async () => {
+    const id = await doneJob();
+    const query = h.pool.query;
+    // Slow lease release: before the fix the 202 overtook it and the cancel below met a held lease (409).
+    h.pool.query = async function slowRelease(sql, ...rest) {
+      if (typeof sql === 'string' && sql.startsWith('UPDATE jobs SET regen_lease = NULL')) {
+        await new Promise((r) => setTimeout(r, 150));
+      }
+      return query.call(this, sql, ...rest);
+    };
+    try {
+      expect((await ana.post(`/api/jobs/${id}/sentences/0/regenerate`, {})).status).toBe(202);
+      expect((await ana.post(`/api/jobs/${id}/cancel`)).status).toBe(202);
+    } finally {
+      h.pool.query = query;
+    }
+  });
 });

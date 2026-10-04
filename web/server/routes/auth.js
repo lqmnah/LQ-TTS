@@ -11,7 +11,7 @@ export function authRouter(ctx) {
   const router = express.Router();
   const needsVerification = { status: 'needs_verification', verifyUrl: config.verifyUrl };
 
-  async function startSession(res, user) {
+  async function startSession(req, res, user) {
     let full;
     try {
       full = await lqstudio.getUser(user.id);
@@ -25,15 +25,18 @@ export function authRouter(ctx) {
     if (userTv(full) > tv) throw new ApiError('invalid_credentials', 'your password changed, please log in again');
     // The session carries the tv of the verified login.
     const { raw, session } = await sessions.create({ ...user, ...full, tv }, full.balance);
+    // The browser's previous session ends here instead of living on unseen for 30 days.
+    const replaced = readSessionCookie(req);
+    if (replaced) await sessions.revoke(hashSessionId(replaced));
     setSessionCookie(res, raw, config);
     return { status: 'ok', user: await accounts.me(session) };
   }
 
-  async function answer(res, out) {
+  async function answer(req, res, out) {
     if (out?.status === 'need_2fa') return res.json({ status: 'need_2fa', challenge: out.challenge });
     if (out?.status === 'needs_verification') return res.json(needsVerification);
     if (out?.status !== 'ok' || !out.user) throw new ApiError('lqstudio_unavailable', 'unexpected answer from LQ-Studio');
-    return res.json(await startSession(res, out.user));
+    return res.json(await startSession(req, res, out.user));
   }
 
   router.post('/auth/login', async (req, res) => {
@@ -45,7 +48,7 @@ export function authRouter(ctx) {
     } catch (err) {
       throw lqError(err);
     }
-    await answer(res, out);
+    await answer(req, res, out);
   });
 
   router.post('/auth/2fa', async (req, res) => {
@@ -58,7 +61,7 @@ export function authRouter(ctx) {
     } catch (err) {
       throw lqError(err);
     }
-    await answer(res, out);
+    await answer(req, res, out);
   });
 
   router.post('/auth/logout', async (req, res) => {
