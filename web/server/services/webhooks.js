@@ -5,7 +5,9 @@ import { LOOKUP_TIMEOUT_MS, WebhookUrlError, resolveWebhookUrl, signWebhook } fr
 export const ATTEMPT_DELAYS_S = Object.freeze([0, 60, 300, 1800]); // after the event; the 4th failure drops it
 export const DELIVERY_TIMEOUT_MS = 10_000;
 export const MIN_RETRY_GAP_S = 30; // after downtime, retries still never come back to back
+export const WEBHOOK_CONCURRENCY = 4; // sends in flight at once, at most one per API key
 const LEASE_SLACK_MS = 15_000; // beyond the DNS bound and the request timeout: connect setup and the result write
+const SHUTDOWN = Object.freeze({ error: 'shutdown' });
 const EVENTS = Object.freeze({ done: 'job.done', failed: 'job.failed' });
 const TIMEOUT_CODES = new Set(['UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_ABORTED']);
 
@@ -59,28 +61,51 @@ export function createWebhooks(ctx, { timeoutMs = DELIVERY_TIMEOUT_MS, lookup } 
   }
 
   // One row at a time, leased for one whole delivery: the DNS check, the request, and slack for the result write.
-  // A lease that runs out (a crashed process) makes the row due again.
-  async function claimNext() {
-    const { rows: [row] } = await pool.query(
-      `UPDATE webhook_deliveries d SET sending_until = now() + make_interval(secs => $1::double precision / 1000)
-       FROM api_keys k
-       WHERE k.id = d.api_key_id
-         AND d.id = (SELECT id FROM webhook_deliveries
-                     WHERE state = 'pending' AND next_attempt_at <= now() AND (sending_until IS NULL OR sending_until < now())
-                     ORDER BY next_attempt_at, id LIMIT 1 FOR UPDATE SKIP LOCKED)
-       RETURNING d.*, k.revoked_at AS key_revoked_at, k.webhook_secret_enc`,
-      [LOOKUP_TIMEOUT_MS + timeoutMs + LEASE_SLACK_MS],
-    );
-    return row ?? null;
+  // A lease that runs out (a crashed process) makes the row due again. A key with a send in flight (a live lease) is
+  // skipped, so one dead endpoint holds at most one slot. Claims in this process run one at a time, so two loops
+  // never both see a key as free.
+  let claiming = Promise.resolve();
+  function claimNext() {
+    const claim = claiming.then(async () => {
+      const { rows: [row] } = await pool.query(
+        `UPDATE webhook_deliveries d SET sending_until = now() + make_interval(secs => $1::double precision / 1000)
+         FROM api_keys k
+         WHERE k.id = d.api_key_id
+           AND d.id = (SELECT w.id FROM webhook_deliveries w
+                       WHERE w.state = 'pending' AND w.next_attempt_at <= now()
+                         AND (w.sending_until IS NULL OR w.sending_until < now())
+                         AND NOT EXISTS (SELECT 1 FROM webhook_deliveries o
+                                         WHERE o.api_key_id = w.api_key_id AND o.sending_until >= now())
+                       ORDER BY w.next_attempt_at, w.id LIMIT 1 FOR UPDATE OF w SKIP LOCKED)
+         RETURNING d.*, k.revoked_at AS key_revoked_at, k.webhook_secret_enc`,
+        [LOOKUP_TIMEOUT_MS + timeoutMs + LEASE_SLACK_MS],
+      );
+      return row ?? null;
+    });
+    claiming = claim.catch(() => {});
+    return claim;
   }
+
+  // Aborted by stop(): sends in flight end at once and count as failed attempts.
+  let halt = new AbortController();
+  const unlessHalted = (promise, signal) => new Promise((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    if (signal.aborted) return onAbort();
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+  });
 
   // Resolves and checks the URL again, then POSTs to exactly the checked address: the pinned lookup hands net/tls that
   // address, while the Host header and the TLS server name stay the URL's hostname. Never follows redirects.
   async function send(row) {
+    const halted = halt.signal;
+    if (halted.aborted) return SHUTDOWN;
     let target;
     try {
-      target = await resolveWebhookUrl(row.url, { allowLoopback: config.webhookAllowLoopback, ...(lookup ? { lookup } : {}) });
+      const checked = resolveWebhookUrl(row.url, { allowLoopback: config.webhookAllowLoopback, ...(lookup ? { lookup } : {}) });
+      target = await unlessHalted(checked, halted);
     } catch (err) {
+      if (halted.aborted) return SHUTDOWN;
       return { error: err instanceof WebhookUrlError ? `blocked: ${err.message}` : 'resolve_failed' };
     }
     const secret = apiKeys.webhookSecret({ id: row.api_key_id, webhook_secret_enc: row.webhook_secret_enc });
@@ -92,7 +117,7 @@ export function createWebhooks(ctx, { timeoutMs = DELIVERY_TIMEOUT_MS, lookup } 
       const res = await request(target.url, {
         method: 'POST',
         dispatcher: agent,
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: AbortSignal.any([AbortSignal.timeout(timeoutMs), halted]),
         body: row.body,
         headers: {
           'content-type': 'application/json',
@@ -105,6 +130,7 @@ export function createWebhooks(ctx, { timeoutMs = DELIVERY_TIMEOUT_MS, lookup } 
       await res.body.dump().catch(() => {});
       return { status: res.statusCode, delivered: res.statusCode >= 200 && res.statusCode < 300 };
     } catch (err) {
+      if (halted.aborted) return SHUTDOWN;
       const timedOut = err?.name === 'TimeoutError' || TIMEOUT_CODES.has(err?.code);
       return { error: timedOut ? 'timeout' : String(err?.code ?? 'connect_failed') };
     } finally {
@@ -138,7 +164,8 @@ export function createWebhooks(ctx, { timeoutMs = DELIVERY_TIMEOUT_MS, lookup } 
   }
 
   let stopped = false;
-  async function pass() {
+  // One worker loop: claim, send, record, until nothing it may take is due.
+  async function drain() {
     let handled = 0;
     while (!stopped) {
       const row = await claimNext();
@@ -152,21 +179,22 @@ export function createWebhooks(ctx, { timeoutMs = DELIVERY_TIMEOUT_MS, lookup } 
         });
       await record(row, outcome);
     }
-    return { handled };
+    return handled;
   }
 
-  // Passes run one at a time; every caller gets a pass that starts after its call.
-  let chain = Promise.resolve();
-  let waiting = null;
-  function runOnce() {
-    if (waiting) return waiting;
-    const next = chain.then(() => {
-      waiting = null;
-      return pass();
-    });
-    waiting = next;
-    chain = next.catch(() => {});
-    return next;
+  // Up to WEBHOOK_CONCURRENCY loops run at once. runOnce() tops the free slots up with new loops and waits for every
+  // loop running then; those keep claiming until nothing is due, so a row due at the call is handled before it
+  // returns. A loop stuck on a dead endpoint holds one slot; the next tick or kick fills the others.
+  const drains = new Set();
+  async function runOnce() {
+    while (!stopped && drains.size < WEBHOOK_CONCURRENCY) {
+      const loop = drain().finally(() => drains.delete(loop));
+      drains.add(loop);
+    }
+    const loops = await Promise.allSettled([...drains]);
+    const failed = loops.find((x) => x.status === 'rejected');
+    if (failed) throw failed.reason;
+    return { handled: loops.reduce((sum, x) => sum + x.value, 0) };
   }
   const safeRun = () => runOnce().catch((err) =>
     log.error({ event: 'webhooks_failed', error: String(err?.stack ?? err) }, 'webhook pass failed'));
@@ -182,15 +210,18 @@ export function createWebhooks(ctx, { timeoutMs = DELIVERY_TIMEOUT_MS, lookup } 
     kick,
     start({ intervalMs = 5000 } = {}) {
       stopped = false;
+      if (halt.signal.aborted) halt = new AbortController();
       timer = setInterval(safeRun, intervalMs);
       timer.unref();
       safeRun();
     },
+    // Ends the loops and aborts sends in flight (recorded as failed attempts, last_error 'shutdown').
     async stop() {
       stopped = true;
       clearInterval(timer);
       timer = null;
-      await chain;
+      halt.abort();
+      await Promise.allSettled([...drains]);
     },
     // The last 20 deliveries of each of the user's active keys, newest first.
     async listForUser(userId) {

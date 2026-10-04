@@ -235,13 +235,20 @@ describe('webhooks', () => {
       return [{ address: '127.0.0.1', family: 4 }];
     },
   });
-  const insertDelivery = async (url) => {
+  const insertDelivery = async (url, { keyId = made.row.id, userId = 'budi' } = {}) => {
     const jobId = crypto.randomUUID();
     await h.pool.query(
-      `INSERT INTO webhook_deliveries (api_key_id, user_id, job_id, event, url, body) VALUES ($1, 'budi', $2, 'job.done', $3, '{"ok":true}')`,
-      [made.row.id, jobId, url],
+      `INSERT INTO webhook_deliveries (api_key_id, user_id, job_id, event, url, body) VALUES ($1, $2, $3, 'job.done', $4, '{"ok":true}')`,
+      [keyId, userId, jobId, url],
     );
     return jobId;
+  };
+  const until = async (check, ms = 3000) => {
+    const end = Date.now() + ms;
+    while (!(await check())) {
+      if (Date.now() > end) throw new Error('condition not met in time');
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
   };
 
   it('connects to the address it checked, with the hostname as the Host header', async () => {
@@ -275,5 +282,63 @@ describe('webhooks', () => {
     } finally {
       await new Promise((resolve) => tlsServer.close(resolve));
     }
+  });
+
+  it("does not let one key's hanging receiver hold up another key, and sends one at a time per key", async () => {
+    const other = await h.ctx.apiKeys.create('cici', { name: 'fast', tv: 0 });
+    receiver.answer((req) => (req.url === '/slow' ? null : [200, 'ok', {}]));
+    const slow = [await insertDelivery(`${receiver.base}/slow`), await insertDelivery(`${receiver.base}/slow`)];
+    const fast = await insertDelivery(`${receiver.base}/fast`, { keyId: other.row.id, userId: 'cici' });
+    const worker = createWebhooks(h.ctx, { timeoutMs: 1000 });
+    const started = Date.now();
+    const running = worker.runOnce();
+    await until(async () => (await delivery(fast)).state === 'delivered');
+    expect(Date.now() - started).toBeLessThan(800); // not behind the first 1 s timeout
+    expect(receiver.hits.filter((x) => x.path === '/slow')).toHaveLength(1); // the second waits for the first
+    await running;
+    expect(receiver.hits.filter((x) => x.path === '/slow')).toHaveLength(2);
+    for (const jobId of slow) expect(await delivery(jobId)).toMatchObject({ state: 'pending', attempts: 1, last_error: 'timeout' });
+  });
+
+  it('stop() aborts a send in flight and counts it as a failed attempt', async () => {
+    receiver.answer(() => null);
+    const jobId = await insertDelivery(`${receiver.base}/slow`);
+    const worker = createWebhooks(h.ctx, { timeoutMs: 10_000 });
+    const running = worker.runOnce();
+    await until(() => receiver.hits.length === 1);
+    const stopping = Date.now();
+    await worker.stop();
+    expect(Date.now() - stopping).toBeLessThan(1000);
+    expect(await running).toEqual({ handled: 1 });
+    expect(await delivery(jobId)).toMatchObject({ state: 'pending', attempts: 1, last_status: null, last_error: 'shutdown' });
+  });
+
+  it('skips a row another worker holds until its lease runs out', async () => {
+    const jobId = await insertDelivery(receiver.url);
+    await h.pool.query(`UPDATE webhook_deliveries SET sending_until = now() + interval '1 minute' WHERE job_id = $1`, [jobId]);
+    expect(await hooks.runOnce()).toEqual({ handled: 0 });
+    expect(receiver.hits).toHaveLength(0);
+    expect(await delivery(jobId)).toMatchObject({ state: 'pending', attempts: 0 });
+    await h.pool.query(`UPDATE webhook_deliveries SET sending_until = now() - interval '1 second' WHERE job_id = $1`, [jobId]);
+    expect(await hooks.runOnce()).toEqual({ handled: 1 });
+    expect(receiver.hits).toHaveLength(1);
+    expect(await delivery(jobId)).toMatchObject({ state: 'delivered', attempts: 1, sending_until: null });
+  });
+
+  it("lists each key's newest 20 deliveries, only to the key's owner", async () => {
+    const busy = await h.ctx.apiKeys.create('cici', { name: 'busy', tv: 0 });
+    const { rows } = await h.pool.query(
+      `INSERT INTO webhook_deliveries (api_key_id, user_id, job_id, event, url, body, state, created_at)
+       SELECT $1, 'cici', gen_random_uuid(), 'job.done', 'https://example.com/h', '{}', 'delivered', now() - make_interval(secs => i)
+       FROM generate_series(1, 22) i RETURNING job_id`,
+      [busy.row.id],
+    );
+    const newest = rows.map((r) => r.job_id).slice(0, 20); // i = 1 is the newest
+    const cici = (await h.as(await h.login(USERS.cici)).get('/api/keys')).body.deliveries;
+    expect(cici.filter((d) => d.keyId === busy.row.id).map((d) => d.jobId)).toEqual(newest);
+    expect(cici.every((d) => d.keyId !== made.row.id)).toBe(true);
+    const budiPage = (await h.as(await h.login(USERS.budi)).get('/api/keys')).body.deliveries;
+    expect(budiPage.length).toBeGreaterThan(0);
+    expect(budiPage.every((d) => d.keyId === made.row.id)).toBe(true);
   });
 });
