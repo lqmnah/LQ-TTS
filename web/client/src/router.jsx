@@ -1,5 +1,6 @@
 import AppShell from './components/AppShell.jsx';
 import RequireSession from './components/RequireSession.jsx';
+import ApiPage from './pages/ApiPage.jsx';
 import CreditsPage from './pages/CreditsPage.jsx';
 import HistoryPage from './pages/HistoryPage.jsx';
 import JobPage from './pages/JobPage.jsx';
@@ -19,6 +20,7 @@ export const routes = [
       { path: 'voices', element: <VoicesPage /> },
       { path: 'history', element: <HistoryPage /> },
       { path: 'credits', element: <CreditsPage /> },
+      { path: 'api-keys', element: <ApiPage /> },
       { path: '*', element: <NotFoundPage /> },
     ],
   },

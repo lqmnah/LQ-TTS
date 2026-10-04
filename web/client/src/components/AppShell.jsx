@@ -1,4 +1,4 @@
-import { ClockCounterClockwiseIcon, CoinsIcon, TextAaIcon, UserSoundIcon, WaveformIcon } from '@phosphor-icons/react';
+import { ClockCounterClockwiseIcon, CodeIcon, CoinsIcon, TextAaIcon, UserSoundIcon, WaveformIcon } from '@phosphor-icons/react';
 import { Link, NavLink, Outlet, useMatch } from 'react-router';
 import { useI18n } from '../i18n/index.jsx';
 import { useHealth } from '../lib/useHealth.js';
@@ -10,6 +10,7 @@ const NAV = [
   { to: '/voices', key: 'nav.voices', icon: UserSoundIcon },
   { to: '/history', key: 'nav.history', icon: ClockCounterClockwiseIcon },
   { to: '/credits', key: 'nav.credits', icon: CoinsIcon },
+  { to: '/api-keys', key: 'nav.api', icon: CodeIcon },
 ];
 
 function Brand({ rail = false }) {
@@ -66,18 +67,18 @@ export default function AppShell() {
       </div>
 
       {/* 63 px tabs + 1 px top border = the 64 px the content reserves for this bar. */}
-      <nav aria-label={t('nav.label')} data-testid="bottom-nav" className="fixed inset-x-0 bottom-0 z-[var(--z-sticky)] grid grid-cols-4 border-t border-line bg-surface pb-[env(safe-area-inset-bottom)] md:hidden">
+      <nav aria-label={t('nav.label')} data-testid="bottom-nav" className="fixed inset-x-0 bottom-0 z-[var(--z-sticky)] grid grid-cols-5 border-t border-line bg-surface pb-[env(safe-area-inset-bottom)] md:hidden">
         {NAV.map((item) => (
           <NavLink
             key={item.to}
             to={item.to}
             end={item.end}
-            className={({ isActive }) => `flex h-[63px] flex-col items-center justify-center gap-1 text-xs font-medium transition-colors duration-150 active:scale-[0.98] motion-reduce:active:scale-100 ${active(item, isActive) ? 'text-ink' : 'text-muted'}`}
+            className={({ isActive }) => `flex h-[63px] min-w-0 flex-col items-center justify-center gap-1 px-1 text-xs font-medium transition-colors duration-150 active:scale-[0.98] motion-reduce:active:scale-100 ${active(item, isActive) ? 'text-ink' : 'text-muted'}`}
           >
             {({ isActive }) => (
               <>
                 <item.icon size={22} weight={active(item, isActive) ? 'fill' : 'regular'} aria-hidden className={active(item, isActive) ? 'text-accent' : ''} />
-                <span>{t(item.key)}</span>
+                <span className="text-center leading-tight">{t(item.key)}</span>
               </>
             )}
           </NavLink>

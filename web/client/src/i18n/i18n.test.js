@@ -18,7 +18,8 @@ function sourceFiles(dir) {
 
 const C2_ERROR_CODES = ['unauthorized', 'invalid_request', 'invalid_credentials', 'invalid_code', 'rate_limited', 'suspended',
   'needs_verification', 'lqstudio_unavailable', 'engine_unavailable', 'insufficient_credits', 'voice_limit_reached',
-  'consent_required', 'not_found', 'too_large', 'unsupported_audio', 'not_regeneratable', 'voice_not_ready', 'internal_error'];
+  'consent_required', 'not_found', 'too_large', 'unsupported_audio', 'not_regeneratable', 'voice_not_ready', 'internal_error',
+  'plan_required', 'key_limit_reached'];
 
 const DYNAMIC_FAMILIES = {
   plan: ['free', 'pro', 'ultra', 'sultan'],
@@ -31,6 +32,7 @@ const DYNAMIC_FAMILIES = {
   'voices.error': ['no_clean_speech', 'unsupported_audio', 'internal_error', 'unknown'],
   'credits.kind': ['job', 'regenerate'],
   'credits.state': ['held', 'settled', 'refunded'],
+  'api.delivery': ['delivered', 'pending', 'dropped'],
 };
 
 describe('dictionaries', () => {

@@ -2,7 +2,7 @@ import { ClockCounterClockwiseIcon, DownloadSimpleIcon, TrashIcon } from '@phosp
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { JobStatus } from '../components/status.jsx';
-import { Button, EmptyState, Notice, PageHeader, Skeleton, buttonClass, touchLinkClass } from '../components/ui.jsx';
+import { Button, EmptyState, Notice, PageHeader, Skeleton, StatusChip, buttonClass, touchLinkClass } from '../components/ui.jsx';
 import { useI18n } from '../i18n/index.jsx';
 import { api } from '../lib/api.js';
 import { triggerDownload } from '../lib/download.js';
@@ -161,6 +161,7 @@ function HistoryRow({ job, onDeleted }) {
     <tr data-testid="history-row" data-job-id={job.id} className="align-top">
       <td className="px-4 py-3">
         <Link to={`/jobs/${job.id}`} className={`font-medium text-ink transition-colors duration-150 [overflow-wrap:anywhere] hover:text-accent ${touchLinkClass}`}>{job.title}</Link>
+        {job.source === 'api' ? <span className="ml-2 inline-flex align-middle"><StatusChip testId="api-chip">{t('history.api_chip')}</StatusChip></span> : null}
         <p className="mt-0.5 text-xs text-muted">{job.voiceName ?? t('history.voice_deleted')} · {formatDateTime(job.createdAt, lang)}</p>
         <div className="mt-1 md:hidden"><JobStatus status={job.status} /></div>
         {error ? <p className="mt-1 text-xs text-danger" role="alert">{errorText(t, error)}</p> : null}

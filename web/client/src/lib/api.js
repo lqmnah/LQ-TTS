@@ -10,6 +10,9 @@
 /** @typedef {import('./types.js').JobDetail} JobDetail */
 /** @typedef {import('./types.js').Sentence} Sentence */
 /** @typedef {import('./types.js').Credits} Credits */
+/** @typedef {import('./types.js').ApiKey} ApiKey */
+/** @typedef {import('./types.js').NewApiKey} NewApiKey */
+/** @typedef {import('./types.js').ApiDelivery} ApiDelivery */
 
 export class ApiError extends Error {
   /**
@@ -154,6 +157,12 @@ export const api = {
   deleteJob: (id) => request(`/jobs/${enc(id)}`, { method: 'DELETE' }),
   /** @returns {Promise<Credits>} */
   credits: () => request('/credits'),
+  /** Active keys of the account and the last 20 webhook deliveries per key. @returns {Promise<{keys: ApiKey[], deliveries: ApiDelivery[]}>} */
+  apiKeys: () => request('/keys'),
+  /** The full key and the webhook secret are in this answer only. 403 `plan_required` / `key_limit_reached`. @param {string} name @returns {Promise<NewApiKey>} */
+  createApiKey: (name) => request('/keys', { method: 'POST', body: { name } }),
+  /** @param {string} id @returns {Promise<null>} */
+  revokeApiKey: (id) => request(`/keys/${enc(id)}`, { method: 'DELETE' }),
 };
 
 /**

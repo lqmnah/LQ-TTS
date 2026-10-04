@@ -91,4 +91,9 @@ describe('AppShell', () => {
     renderRoutes(routes);
     expect(screen.getByRole('button', { name: 'Rara Wibisono, Menu akun' })).toBeInTheDocument();
   });
+
+  it('links the API page from the navigation', () => {
+    renderRoutes(routes);
+    for (const link of screen.getAllByRole('link', { name: 'API' })) expect(link).toHaveAttribute('href', '/api-keys');
+  });
 });

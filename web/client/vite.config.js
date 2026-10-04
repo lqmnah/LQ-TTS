@@ -6,7 +6,8 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     port: 5173,
-    proxy: { '/api': { target: process.env.LQTTS_API ?? 'http://127.0.0.1:8760' } },
+    // A plain '/api' key is a prefix match and would also swallow the SPA route /api-keys.
+    proxy: { '^/api(/|$)': { target: process.env.LQTTS_API ?? 'http://127.0.0.1:8760' } },
   },
   build: { outDir: 'dist', sourcemap: false },
   test: {

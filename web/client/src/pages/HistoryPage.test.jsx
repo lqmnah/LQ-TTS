@@ -125,4 +125,12 @@ describe('HistoryPage', () => {
     renderRoutes(routes, { path: '/history' });
     expect(await screen.findByRole('link', { name: 'Buat voiceover pertama' })).toHaveAttribute('href', '/');
   });
+
+  it('marks voiceovers made through the API', async () => {
+    api.jobs.mockResolvedValue({ items: [summary('a', { source: 'api' }), summary('b', { source: 'web' })], nextBefore: null });
+    renderRoutes(routes, { path: '/history' });
+    const rows = await screen.findAllByTestId('history-row');
+    expect(within(rows[0]).getByTestId('api-chip')).toHaveTextContent('API');
+    expect(within(rows[1]).queryByTestId('api-chip')).not.toBeInTheDocument();
+  });
 });
