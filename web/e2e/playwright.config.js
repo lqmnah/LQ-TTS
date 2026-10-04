@@ -26,6 +26,7 @@ export default defineConfig({
     { name: 'journey', testMatch: /journey\.spec\.js/ },
     { name: 'screens', testMatch: /screens\.spec\.js/, dependencies: ['journey'] },
     { name: 'smoke', testMatch: /smoke\.spec\.js/ },
+    { name: 'api', testMatch: /api\.spec\.js/, dependencies: ['journey'] },
   ],
   webServer: target.webServer,
 });

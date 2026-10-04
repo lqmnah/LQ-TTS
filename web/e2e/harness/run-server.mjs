@@ -2,6 +2,7 @@
 // (throwaway schema lq_tts_web_e2e, dropped first), fake LQ-Studio. Secrets are read from web/.env.stg and never printed.
 // Before the server starts, the VO Profile CLI seeds the Pandji profile from the short fixture clip.
 import { execFileSync, spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { closeSync, openSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { readEnvFile, toHostDatabaseUrl } from '../../ops/env-lib.mjs';
@@ -74,6 +75,8 @@ const env = {
   LQSTUDIO_PUBLIC_URL: 'https://demo.lq-studio.com',
   COOKIE_SECURE: 'false',
   CLIENT_DIST: fileURLToPath(new URL('../../client/dist', import.meta.url)),
+  API_ENC_KEY: randomBytes(32).toString('base64'), // this run's throwaway schema only
+  WEBHOOK_ALLOW_LOOPBACK: 'true', // the API spec's webhook receiver listens on 127.0.0.1
 };
 
 // One child at a time (the CLI, then the server). A signal is forwarded to it exactly once; with no child running,
@@ -127,6 +130,17 @@ async function seedProfile() {
   }
 }
 
+// Locally the API spec voices over with Pandji: allow it for the API through the same CLI flag the release would use.
+// Only this run's schema changes; staging and PROD keep Pandji off the API.
+async function allowPandjiForApi() {
+  const cli = startChild(['server/cli/profile-add.js', '--api-allowed', 'true', '--slug', 'pandji'], ['ignore', 'inherit', 'inherit']);
+  const code = await new Promise((resolve) => cli.on('exit', (exitCode) => resolve(exitCode ?? 1)));
+  current = null;
+  if (code === 0) return null;
+  process.stderr.write(`e2e seed: profile-add --api-allowed exited ${code}\n`);
+  return stopSignal ? signalExitCode(stopSignal) : 1;
+}
+
 // The schema is throwaway, but it is the only record of the profile voices: it is dropped only once each of them
 // is confirmed gone from the engine (204 or 404). Otherwise it stays for the next run and the run fails.
 async function cleanupAndExit(code) {
@@ -156,6 +170,8 @@ await purgeEngineVoices();
 if (stopSignal) await cleanupAndExit(signalExitCode(stopSignal));
 const seedFailure = await seedProfile();
 if (seedFailure !== null) await cleanupAndExit(seedFailure);
+const allowFailure = await allowPandjiForApi();
+if (allowFailure !== null) await cleanupAndExit(allowFailure);
 if (stopSignal) await cleanupAndExit(signalExitCode(stopSignal));
 
 startChild(['server/index.js'], 'inherit').on('exit', async (code, signal) => {

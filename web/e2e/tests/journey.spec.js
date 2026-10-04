@@ -41,7 +41,7 @@ test('journey: login with 2FA, VO Profile voiceover, clone, generate, live progr
   expect(new URL(page.url()).pathname).toBe('/');
   signedIn = true;
 
-  // Leftovers of an earlier failed run must not eat the Free plan's 3-voice limit.
+  // Leftovers of an earlier failed run must not eat the plan's voice limit.
   const before = await apiCall(page, 'GET', '/voices');
   for (const v of before.json.filter((x) => x.name.startsWith('E2E '))) await apiCall(page, 'DELETE', `/voices/${v.id}`);
 

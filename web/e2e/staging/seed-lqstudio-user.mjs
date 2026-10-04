@@ -36,7 +36,7 @@ const user = {
   email: 'tts-e2e@lq-studio.com',
   password: db.hashPassword(password),
   role: 'user',
-  tier: 'free',
+  tier: 'pro', // the API spec creates a real key, which needs Pro (LQ-TTS public API)
   LANGUAGE: 'id',
   credits: balance + grant,
   emailVerified: true,

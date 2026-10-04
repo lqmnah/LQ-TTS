@@ -18,6 +18,10 @@ export const LOCAL_USERS = [
     id: 'e2e-u1', name: 'Rara Wibisono', email: 'rara.e2e@example.com', username: 'e2e-rara', password: 'e2e-pass-7391',
     totp: '482913', verified: true, suspended: false, plan: 'free', paid: false, balance: 2400,
   },
+  {
+    id: 'e2e-u2', name: 'Bima Pratama', email: 'bima.e2e@example.com', username: 'e2e-bima', password: 'e2e-pass-5820',
+    totp: null, verified: true, suspended: false, plan: 'pro', paid: true, balance: 2400,
+  },
 ];
 
 export const TARGET = process.env.E2E_TARGET ?? 'local';
@@ -66,4 +70,14 @@ export function credentials() {
   if (!existsSync(STAGING_CREDENTIALS)) throw new Error(`missing ${STAGING_CREDENTIALS} (Task 14 seeds it)`);
   const env = readEnvFile(STAGING_CREDENTIALS);
   return { identifier: env.LQTTS_E2E_IDENTIFIER, password: env.LQTTS_E2E_PASSWORD, code: () => totp(env.LQTTS_E2E_TOTP_SECRET) };
+}
+
+/** A Pro account for the API spec: the local Pro user, or the staging gate account (seeded as Pro). Never on PROD. */
+export function apiCredentials() {
+  if (TARGET === 'prod') throw new Error('E2E_TARGET=prod runs the smoke project only; the API spec never runs on PROD');
+  if (TARGET === 'local') {
+    const u = LOCAL_USERS[1];
+    return { identifier: u.username, password: u.password, code: null };
+  }
+  return credentials();
 }
