@@ -88,8 +88,9 @@ export function createApiJobs(pool) {
       return row?.job_id ?? null;
     },
     // Frees a claim only when nothing is left behind: no job bound to it and the request's charge (if any) no longer
-    // held. A hold whose job went unrecorded keeps the claim until the 2-minute takeover, so a retry cannot hold again
-    // while reconciliation still owes that refund.
+    // held. A hold whose job went unrecorded keeps the claim for at least the 2-minute takeover window, not until its
+    // refund: a retry after that may take the claim over and hold again while the old hold still waits for the
+    // reconciler's refund. Money stays correct; the balance is only briefly lower.
     async releaseKey(userId, key, chargeId = null) {
       await pool.query(
         `DELETE FROM api_idempotency WHERE user_id = $1 AND idem_key = $2 AND job_id IS NULL

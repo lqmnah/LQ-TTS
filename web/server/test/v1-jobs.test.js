@@ -220,9 +220,10 @@ describe('/v1 voiceovers', () => {
     expect(failed.status).toBe(500);
     const engineJob = [...h.engine.state.jobs.keys()].at(-1);
     const claimed = async () => (await h.pool.query(`SELECT job_id FROM api_idempotency WHERE user_id = 'budi' AND idem_key = 'dies'`)).rows[0].job_id;
-    const recorded = (await h.pool.query('SELECT 1 FROM jobs WHERE id = $1', [engineJob])).rowCount === 1;
-    // A recorded job is bound to its claim in the same transaction; an unbound claim means nothing was recorded.
-    expect(await claimed()).toBe(recorded ? engineJob : null);
+    // The bind runs in the transaction that records the job: its failure rolls the job row back, so the claim stays
+    // unbound and no recorded job is ever left without its claim.
+    expect((await h.pool.query('SELECT 1 FROM jobs WHERE id = $1', [engineJob])).rowCount).toBe(0);
+    expect(await claimed()).toBe(null);
     await ageLeftovers('dies');
     const retry = await create({}, { 'idempotency-key': 'dies' });
     expect(retry.status).toBe(202);
