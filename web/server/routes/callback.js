@@ -15,7 +15,7 @@ export function verifySignature(secret, timestamp, body, signature, nowS = Math.
 }
 
 export function callbackRouter(ctx) {
-  const { config, engine, jobsRepo, charges, log } = ctx;
+  const { config, engine, jobsRepo, charges, webhooks, log } = ctx;
   const router = express.Router();
   router.post('/internal/engine-callback', express.raw({ type: () => true, limit: '64kb' }), async (req, res) => {
     const body = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
@@ -50,6 +50,8 @@ export function callbackRouter(ctx) {
     }
     await jobsRepo.applyEngineState(jobId, { status, revision, audioSeconds });
     const ok = await charges.resolveJob(jobId, { status, revision }, { maxRevision: revision });
+    await webhooks.onTerminal(jobId, { status, revision }).catch((err) =>
+      log.warn({ event: 'webhook_enqueue_failed', jobId, error: String(err?.message ?? err) }, 'could not record the webhook'));
     res.status(ok ? 200 : 503).json({ ok });
   });
   return router;

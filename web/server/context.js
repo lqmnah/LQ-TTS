@@ -8,6 +8,7 @@ import { createJobsRepo } from './services/jobs-repo.js';
 import { createProfiles } from './services/profiles.js';
 import { createRateLimiter } from './services/rate-limit.js';
 import { createSessionStore } from './services/sessions.js';
+import { createWebhooks } from './services/webhooks.js';
 
 export function createContext({ config, pool, lqstudio, engine, log }) {
   const ctx = { config, pool, lqstudio, engine, log };
@@ -21,5 +22,6 @@ export function createContext({ config, pool, lqstudio, engine, log }) {
   ctx.charges = createCharges(ctx);
   ctx.jobControl = createJobControl(ctx);
   ctx.apiJobs = createApiJobs(pool);
+  ctx.webhooks = createWebhooks(ctx);
   return ctx;
 }

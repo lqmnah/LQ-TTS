@@ -45,7 +45,7 @@ describe('API keys (browser routes)', () => {
     expect(JSON.stringify(h.logs)).not.toContain(res.body.webhookSecret);
     expect(h.logs).toContainEqual(expect.objectContaining({ event: 'api_key_created', userId: 'budi', keyId }));
     const list = await budi.get('/api/keys');
-    expect(list.body).toEqual({ keys: [{ id: res.body.id, name: 'Zapier', prefix: res.body.prefix, createdAt: res.body.createdAt, lastUsedAt: null }] });
+    expect(list.body).toEqual({ keys: [{ id: res.body.id, name: 'Zapier', prefix: res.body.prefix, createdAt: res.body.createdAt, lastUsedAt: null }], deliveries: [] });
     expect(JSON.stringify(list.body)).not.toContain(secret);
   });
 

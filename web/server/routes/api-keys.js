@@ -6,12 +6,13 @@ import { isUuid } from '../services/ownership.js';
 const MAX_NAME = 60; // code points, as the api_keys CHECK counts them
 
 export function apiKeysRouter(ctx) {
-  const { accounts, apiKeys } = ctx;
+  const { accounts, apiKeys, webhooks } = ctx;
   const router = express.Router();
 
   router.get('/keys', async (req, res) => {
-    const keys = await apiKeys.list(req.session.user_id);
-    res.set('Cache-Control', 'no-store').json({ keys: keys.map(toApiKey) });
+    const userId = req.session.user_id;
+    const [keys, deliveries] = await Promise.all([apiKeys.list(userId), webhooks.listForUser(userId)]);
+    res.set('Cache-Control', 'no-store').json({ keys: keys.map(toApiKey), deliveries });
   });
 
   router.post('/keys', async (req, res) => {

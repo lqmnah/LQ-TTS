@@ -3,7 +3,7 @@ import { HELD_MIN_AGE_MS } from './charges.js';
 
 // Resolves held charges the callback path left behind. Rows with job_id NULL are holds whose create never wrote a
 // job row (or whose outcome was unknown); decide() refunds them once they are old enough.
-export function createReconciler({ pool, engine, charges, jobsRepo, log }, { intervalMs = 60000, batchSize = 500 } = {}) {
+export function createReconciler({ pool, engine, charges, jobsRepo, webhooks, log }, { intervalMs = 60000, batchSize = 500 } = {}) {
   let stopped = false;
 
   // What the engine said about a job in this pass: {view} (null view = job gone) or {error}.
@@ -43,6 +43,13 @@ export function createReconciler({ pool, engine, charges, jobsRepo, log }, { int
         view = out.view;
       }
       await charges.resolveOne(charge, view);
+    }
+    // A lost engine callback also lost its webhook: record it once the charges above are resolved.
+    for (const [jobId, out] of seen) {
+      if (out.view && (out.view.status === 'done' || out.view.status === 'failed')) {
+        await webhooks.onTerminal(jobId, out.view).catch((err) =>
+          log.warn({ event: 'webhook_enqueue_failed', jobId, error: String(err?.message ?? err) }, 'could not record the webhook'));
+      }
     }
     if (checked) log.info({ event: 'reconcile_pass', checked }, 'reconciliation pass');
     return { checked };

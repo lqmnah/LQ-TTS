@@ -24,11 +24,12 @@ const server = createApp(ctx).listen(config.port, config.host, () => {
 server.requestTimeout = 30 * 60 * 1000; // 95 MB uploads on slow links
 const reconciler = createReconciler(ctx, { intervalMs: config.reconcileIntervalMs });
 reconciler.start();
+ctx.webhooks.start();
 
 const DRAIN_MS = 10_000;
 
 // Stop accepting, let in-flight requests finish (a create cut off between the engine call and its charge row would
-// leave an unbilled job), then stop the reconciler and the pool. A second signal exits at once.
+// leave an unbilled job), then stop the reconciler, the webhook worker and the pool. A second signal exits at once.
 let stopping = false;
 async function shutdown(signal) {
   if (stopping) {
@@ -48,6 +49,7 @@ async function shutdown(signal) {
   clearTimeout(deadline);
   clearInterval(sweep);
   await reconciler.stop();
+  await ctx.webhooks.stop(); // a delivery in flight finishes or times out first
   await pool.end();
   process.exit(0);
 }
