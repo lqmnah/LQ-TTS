@@ -197,7 +197,8 @@ export async function startFakeEngine({ port = 0, token } = {}) {
         if (!text) return fail(res, 400, 'invalid_text', 'text is empty');
         const j = {
           id: crypto.randomUUID(), voice_id: v.id, text, settings: { speed: 0.9, ...(body.settings ?? {}) },
-          callback_url: body.callback_url ?? null, idem: key ?? null, status: 'queued', error_code: null, revision: 1,
+          callback_url: body.callback_url ?? null, priority: body.priority ?? null, idem: key ?? null, status: 'queued',
+          error_code: null, revision: 1,
           doneRevision: 0, chars: [...text].length, audio_seconds: null, created_at: now(), finished_at: null,
           sentences: text.split(/(?<=[.!?])\s+/).filter(Boolean).map((t, i) => ({
             idx: i, paragraph_idx: 0, text: t, style: null, status: 'pending', takes: 0, score: null,

@@ -264,4 +264,15 @@ describe('voiceover jobs', () => {
     expect(usage.length).toBeGreaterThan(0);
     for (const row of usage) expect(row).toMatchObject({ title: expect.any(String), jobAvailable: false });
   });
+
+  it('queues web voiceovers at web priority and labels the job and its charge web', async () => {
+    const res = await ana.post('/api/jobs', { voiceId: voice.id, text: 'Halo.' });
+    expect(res.status).toBe(202);
+    expect(h.engine.state.callsTo('POST', '/v1/jobs').at(-1).body.priority).toBe(5);
+    expect(h.engine.state.jobs.get(res.body.id).priority).toBe(5);
+    const list = await ana.get('/api/jobs');
+    expect(list.body.items.find((j) => j.id === res.body.id).source).toBe('web');
+    const { rows: [charge] } = await h.pool.query('SELECT source FROM charges WHERE job_id = $1', [res.body.id]);
+    expect(charge.source).toBe('web');
+  });
 });

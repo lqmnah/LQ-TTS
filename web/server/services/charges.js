@@ -18,12 +18,12 @@ export function decide(charge, view, now = Date.now()) {
 }
 
 export function createCharges({ pool, lqstudio, sessions, log }) {
-  async function insertHeld({ userId, jobId = null, revision, kind, sentenceIdx = null, chars, credits, holdId }) {
+  async function insertHeld({ userId, jobId = null, revision, kind, sentenceIdx = null, chars, credits, holdId, source = 'web' }, client = pool) {
     try {
-      const { rows: [row] } = await pool.query(
-        `INSERT INTO charges (user_id, job_id, revision, kind, sentence_idx, chars, credits, hold_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-        [userId, jobId, revision, kind, sentenceIdx, chars, credits, holdId],
+      const { rows: [row] } = await client.query(
+        `INSERT INTO charges (user_id, job_id, revision, kind, sentence_idx, chars, credits, hold_id, source)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+        [userId, jobId, revision, kind, sentenceIdx, chars, credits, holdId, source],
       );
       return row;
     } catch (err) {

@@ -2,10 +2,11 @@ import crypto from 'node:crypto';
 import express from 'express';
 import { relayEngine } from '../http/relay.js';
 import { ApiError } from '../lib/errors.js';
-import { countChars, countSentences, creditsFor, makeTitle, rupiahFor } from '../lib/pricing.js';
+import { countSentences, creditsFor, rupiahFor } from '../lib/pricing.js';
 import { engineError, isEngineNotFound } from '../lib/upstream-errors.js';
 import { toSummary } from '../services/jobs-repo.js';
 import { isUuid, ownJob, parseIdx, usableVoice } from '../services/ownership.js';
+import { queueVoiceover, readJobInput, readText } from '../services/voiceovers.js';
 
 const FILE_NAMES = new Set(['final.mp3', 'final.wav', 'subs.srt', 'subs.vtt']);
 const CURSOR_AT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
@@ -21,14 +22,6 @@ function parseCursor(raw) {
     throw new ApiError('invalid_request', 'before must be the nextBefore of a previous page');
   }
   return { createdAt: at, id };
-}
-
-function readText(value, max) {
-  if (typeof value !== 'string') throw new ApiError('invalid_request', 'text is required');
-  const text = value.trim();
-  const chars = countChars(text);
-  if (chars > max) throw new ApiError('too_large', 'text exceeds 20,000 characters');
-  return { text, chars };
 }
 
 export function filesFor(jobId, engineFiles) {
@@ -58,13 +51,7 @@ export function jobsRouter(ctx) {
   });
 
   router.post('/jobs', async (req, res) => {
-    const { voiceId, settings = {} } = req.body ?? {};
-    const { text, chars } = readText(req.body?.text, config.maxTextChars);
-    if (chars === 0) throw new ApiError('invalid_request', 'text is empty');
-    if (typeof voiceId !== 'string') throw new ApiError('invalid_request', 'voiceId is required');
-    if (settings === null || typeof settings !== 'object' || Array.isArray(settings)) {
-      throw new ApiError('invalid_request', 'settings must be an object');
-    }
+    const { text, chars, voiceId, settings } = readJobInput(req.body, config.maxTextChars);
     const userId = req.session.user_id;
     await accounts.fresh(req.session);
     const voice = await usableVoice(ctx, userId, voiceId);
@@ -72,17 +59,7 @@ export function jobsRouter(ctx) {
     const credits = creditsFor(chars);
     const key = crypto.randomUUID();
     const charge = await charges.insertHeld({ userId, revision: 1, kind: 'job', chars, credits, holdId: `tts:${key}:r1` });
-    await charges.hold(charge);
-    let created;
-    try {
-      created = await engine.createJob({ voiceId: voice.id, text, settings, callbackUrl: config.engineCallbackUrl, idempotencyKey: key });
-    } catch (err) {
-      await charges.refundNow(charge);
-      throw engineError(err);
-    }
-    await jobsRepo.insertWithCharge({
-      id: created.id, userId, voiceId: voice.id, voiceName: voice.name, title: makeTitle(text), chars, chargeId: charge.id,
-    });
+    const created = await queueVoiceover(ctx, { charge, key, userId, voice, text, chars, settings });
     res.status(202).json({ id: created.id, credits, estimatedSeconds: created.estimated_seconds });
   });
 

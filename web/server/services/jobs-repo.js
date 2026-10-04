@@ -3,18 +3,19 @@ const WITH_CREDITS = `j.*, coalesce((SELECT sum(c.credits) FROM charges c WHERE 
 export const toSummary = (r) => ({
   id: r.id, title: r.title, voiceId: r.voice_id, voiceName: r.voice_name, status: r.status, chars: r.chars,
   credits: r.credits, audioSeconds: r.audio_seconds, revision: r.revision, createdAt: r.created_at, finishedAt: r.finished_at,
+  source: r.source,
 });
 
 export function createJobsRepo(pool) {
   return {
-    async insertWithCharge({ id, userId, voiceId, voiceName, title, chars, chargeId }) {
+    async insertWithCharge({ id, userId, voiceId, voiceName, title, chars, chargeId, source = 'web', apiKeyId = null, webhookUrl = null }) {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
         await client.query(
-          `INSERT INTO jobs (id, user_id, voice_id, voice_name, title, chars, status, revision)
-           VALUES ($1, $2, $3, $4, $5, $6, 'queued', 1)`,
-          [id, userId, voiceId, voiceName, title, chars],
+          `INSERT INTO jobs (id, user_id, voice_id, voice_name, title, chars, status, revision, source, api_key_id, webhook_url)
+           VALUES ($1, $2, $3, $4, $5, $6, 'queued', 1, $7, $8, $9)`,
+          [id, userId, voiceId, voiceName, title, chars, source, apiKeyId, webhookUrl],
         );
         await client.query('UPDATE charges SET job_id = $1 WHERE id = $2', [id, chargeId]);
         await client.query('COMMIT');

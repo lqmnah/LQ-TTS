@@ -21,8 +21,8 @@ export function createEngine({ baseUrl, token, timeoutMs = 15000 }) {
     listVoices: (ownerRef) => call('GET', `/v1/voices?owner_ref=${encodeURIComponent(ownerRef)}`),
     getVoice: (id) => call('GET', `/v1/voices/${id}`),
     deleteVoice: (id) => call('DELETE', `/v1/voices/${id}`),
-    createJob: ({ voiceId, text, settings, callbackUrl, idempotencyKey }) =>
-      call('POST', '/v1/jobs', { voice_id: voiceId, text, settings, callback_url: callbackUrl }, { 'idempotency-key': idempotencyKey }),
+    createJob: ({ voiceId, text, settings, callbackUrl, idempotencyKey, priority }) =>
+      call('POST', '/v1/jobs', { voice_id: voiceId, text, settings, callback_url: callbackUrl, priority }, { 'idempotency-key': idempotencyKey }),
     getJob: (id) => call('GET', `/v1/jobs/${id}`),
     sentences: (id) => call('GET', `/v1/jobs/${id}/sentences`),
     regenerate: (id, idx, { text, style }) => call('POST', `/v1/jobs/${id}/sentences/${idx}/regenerate`, { text, style }),
