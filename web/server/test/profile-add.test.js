@@ -125,6 +125,10 @@ describe('profile-add CLI', () => {
     [['--bogus'], /^error: Unknown option '--bogus'/],
     [['--meta', join(dir, 'missing.json'), '--filename', 'a.mp3'], /^error: cannot read metadata file .*missing\.json as JSON$/],
     [['--meta', writeMeta({ gender: 'other' }), '--filename', 'a.mp3'], /^error: gender must be male, female or neutral$/],
+    [['--api-allowed', 'yes', '--slug', 'x'], /^error: --api-allowed must be true or false$/],
+    [['--api-allowed', 'true'], /^error: --slug is required with --api-allowed$/],
+    [['--slug', 'x', '--list'], /^error: usage: profile-add\.js/],
+    [['--api-allowed', 'true', '--slug', 'x', '--filename', 'a.mp3'], /^error: usage: profile-add\.js/],
   ])('refuses %j before any upload', async (argv, message) => {
     const before = uploads();
     const { code, lines, errors } = await run(argv);
@@ -389,6 +393,22 @@ describe('profile-add CLI', () => {
     const res = await run(['--meta', writeMeta({ slug: 'leaky' }), '--filename', 'a.wav'], { engine: leaky });
     expect(res.code).toBe(1);
     expect(res.errors).toEqual(['error: connect to *** with *** failed']);
+  });
+
+  it('allows and disallows a profile for the API by slug, keeps the flag on replace, and lists it', async () => {
+    const { id } = await run(['--meta', writeMeta({ slug: 'api-flag' }), '--filename', 'a.wav']);
+    expect((await h.ctx.profiles.bySlug('api-flag')).api_allowed).toBe(false);
+    const on = await run(['--api-allowed', 'true', '--slug', 'api-flag']);
+    expect(on).toMatchObject({ code: 0, lines: ['profile api-flag api allowed'], errors: [] });
+    expect((await run(['--list'])).lines).toContain(`profile api-flag voice ${id} ready api`);
+    const replaced = await run(['--meta', writeMeta({ slug: 'api-flag' }), '--filename', 'a.wav']);
+    expect(replaced.code).toBe(0);
+    expect((await h.ctx.profiles.bySlug('api-flag')).api_allowed).toBe(true);
+    const off = await run(['--api-allowed', 'false', '--slug', 'api-flag']);
+    expect(off.lines).toEqual(['profile api-flag api not allowed']);
+    expect((await h.ctx.profiles.bySlug('api-flag')).api_allowed).toBe(false);
+    const unknown = await run(['--api-allowed', 'true', '--slug', 'nobody']);
+    expect(unknown).toMatchObject({ code: 1, errors: ['error: profile nobody not found'] });
   });
 
   it('never printed a secret in any run above', () => {

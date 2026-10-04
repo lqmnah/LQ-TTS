@@ -1,6 +1,8 @@
 // Admin CLI for VO Profiles (library voices). Runs inside the web container, which carries every env setting.
 //   add or replace: docker exec -i <container> node server/cli/profile-add.js --meta server/cli/profiles/pandji.json --filename VO-Sample-Pandji.mp3 < VO-Sample-Pandji.mp3
 //   deactivate:     docker exec <container> node server/cli/profile-add.js --deactivate pandji
+//   API access:     docker exec <container> node server/cli/profile-add.js --api-allowed true|false --slug pandji
+//                   (only when the voice owner has agreed to API use; replacing a profile keeps the flag)
 //   --grace-seconds <n> (default 60): after the switch, how long to wait before the old voice may be deleted.
 //   list:           docker exec <container> node server/cli/profile-add.js --list
 // The audio arrives on stdin (docker exec -i forwards stdin only, so the metadata is a file inside the image).
@@ -22,7 +24,7 @@ export const POLL_MS = 5000;
 export const TIMEOUT_MS = 15 * 60 * 1000;
 // A job create that passed its voice check on the old voice just before the switch may land its row a moment later.
 export const GRACE_SECONDS = 60;
-export const USAGE = 'usage: profile-add.js --meta <file.json> --filename <name.mp3|.wav|.m4a|.flac> < audio | --deactivate <slug> | --list';
+export const USAGE = 'usage: profile-add.js --meta <file.json> --filename <name.mp3|.wav|.m4a|.flac> < audio | --deactivate <slug> | --api-allowed <true|false> --slug <slug> | --list';
 const AUDIO_TYPES = { '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.m4a': 'audio/mp4', '.flac': 'audio/flac' };
 
 export function redact(text, secrets) {
@@ -45,11 +47,22 @@ function describeError(err) {
 function parseCliArgs(argv) {
   const { values, positionals } = parseArgs({
     args: argv,
-    options: { meta: { type: 'string' }, filename: { type: 'string' }, deactivate: { type: 'string' }, 'grace-seconds': { type: 'string' }, list: { type: 'boolean' } },
+    options: {
+      meta: { type: 'string' }, filename: { type: 'string' }, deactivate: { type: 'string' }, 'grace-seconds': { type: 'string' },
+      list: { type: 'boolean' }, 'api-allowed': { type: 'string' }, slug: { type: 'string' },
+    },
     allowPositionals: true,
   });
-  const modes = [values.meta !== undefined, values.deactivate !== undefined, values.list === true].filter(Boolean).length;
+  const modes = [values.meta !== undefined, values.deactivate !== undefined, values.list === true, values['api-allowed'] !== undefined]
+    .filter(Boolean).length;
   if (positionals.length || modes !== 1) throw new Error(USAGE);
+  if (values['api-allowed'] !== undefined) {
+    if (values.filename !== undefined || values['grace-seconds'] !== undefined) throw new Error(USAGE);
+    if (values['api-allowed'] !== 'true' && values['api-allowed'] !== 'false') throw new Error('--api-allowed must be true or false');
+    if (!values.slug) throw new Error('--slug is required with --api-allowed');
+    return { ...values, apiAllowed: values['api-allowed'] === 'true' };
+  }
+  if (values.slug !== undefined) throw new Error(USAGE);
   if (values.meta === undefined) {
     if (values.filename !== undefined || values['grace-seconds'] !== undefined) throw new Error(USAGE);
     return values;
@@ -182,6 +195,12 @@ async function deactivate({ profiles }, slug, out) {
   return 0;
 }
 
+async function setApiAllowed({ profiles }, slug, allowed, out) {
+  if (!(await profiles.setApiAllowed(slug, allowed))) throw new Error(`profile ${slug} not found`);
+  out(`profile ${slug} api ${allowed ? 'allowed' : 'not allowed'}`);
+  return 0;
+}
+
 // Every active row, including those the public list hides (engine voice gone or not a library voice).
 async function voiceState(engine, voiceId) {
   try {
@@ -196,7 +215,7 @@ async function listProfiles({ engine, profiles }, out) {
   const rows = await profiles.list();
   const states = await Promise.all(rows.map((row) => voiceState(engine, row.voice_id)));
   out(`profiles ${rows.length}`);
-  rows.forEach((row, i) => out(`profile ${row.slug} voice ${row.voice_id} ${states[i]}`));
+  rows.forEach((row, i) => out(`profile ${row.slug} voice ${row.voice_id} ${states[i]}${row.api_allowed ? ' api' : ''}`));
   return 0;
 }
 
@@ -209,6 +228,7 @@ export async function runProfileAdd({
     const args = parseCliArgs(argv);
     if (args.list) return await listProfiles(ctx, out);
     if (args.deactivate !== undefined) return await deactivate(ctx, args.deactivate, out);
+    if (args.apiAllowed !== undefined) return await setApiAllowed(ctx, args.slug, args.apiAllowed, out);
     return await addProfile(ctx, args, { stdin, out, pollMs, timeoutMs, sleep, now, signals, exit });
   } catch (error) {
     err(`error: ${redact(describeError(error), secrets)}`);
