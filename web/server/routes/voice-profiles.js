@@ -1,7 +1,7 @@
 import express from 'express';
 import { profilesWithVoices } from '../services/profiles.js';
 
-export const toProfile = (row, voice) => ({
+const toProfile = (row, voice) => ({
   id: row.voice_id,
   slug: row.slug,
   name: row.name,

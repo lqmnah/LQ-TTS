@@ -90,4 +90,19 @@ describe('voice profile store', () => {
     await insert('dupe', [{ id: 'a', en: 'a' }]);
     await expect(insert('dupe', [{ id: 'a', en: 'a' }])).rejects.toMatchObject({ code: '23505' });
   });
+  it('refuses a gender, language, tag count or name length outside the spec', async () => {
+    const tag = { id: 'a', en: 'a' };
+    const insert = ({ name = 'X', gender = 'male', language = 'id', tags = [tag] } = {}) => pool.query(
+      `INSERT INTO voice_profiles (voice_id, slug, name, gender, language, description_id, description_en, tags,
+         best_for_id, best_for_en, consent_subject, consent_attested_by, consent_scope, consent_granted_at)
+       VALUES ($1, $2, $3, $4, $5, 'd', 'd', $6::jsonb, 'b', 'b', 's', 'a', 'sc', now())`,
+      [uuid(), `chk-${crypto.randomBytes(4).toString('hex')}`, name, gender, language, JSON.stringify(tags)],
+    );
+    for (const bad of [{ gender: 'other' }, { language: 'fr' }, { tags: Array(13).fill(tag) }, { name: '' }, { name: 'n'.repeat(81) }]) {
+      await expect(insert(bad)).rejects.toMatchObject({ code: '23514' });
+    }
+    for (const ok of [{ gender: 'female' }, { gender: 'neutral' }, { language: 'en' }, { tags: Array(12).fill(tag) }, { name: 'n'.repeat(80) }]) {
+      await insert(ok);
+    }
+  });
 });

@@ -144,4 +144,21 @@ describe('VO Profiles', () => {
     expect((await ana.get(`/api/voices/${theirs.id}/preview`)).status).toBe(404);
     expect((await ana.post('/api/jobs', { voiceId: theirs.id, text: 'Halo dunia.' })).status).toBe(404);
   });
+  it('still regenerates a sentence of a finished job after its profile is deactivated', async () => {
+    const voice = await addProfile('regen-retired');
+    const job = await ana.post('/api/jobs', { voiceId: voice.id, text: 'Satu dua tiga. Empat lima enam.' });
+    expect(job.status).toBe(202);
+    h.engine.setJob(job.body.id, { status: 'done' });
+    await h.ctx.profiles.deactivate('regen-retired');
+    const res = await ana.post(`/api/jobs/${job.body.id}/sentences/0/regenerate`, {});
+    expect(res.status).toBe(202);
+    expect(res.body.revision).toBe(2);
+  });
+
+  it('lists a profile whose engine voice failed, with its status and error code', async () => {
+    const voice = await addProfile('broken', { status: 'failed' });
+    h.engine.state.voices.get(voice.id).error_code = 'no_clean_speech';
+    const item = (await ana.get('/api/voice-profiles')).body.find((p) => p.id === voice.id);
+    expect(item).toMatchObject({ slug: 'broken', status: 'failed', errorCode: 'no_clean_speech' });
+  });
 });
