@@ -18,8 +18,11 @@ export async function ownVoice({ engine }, userId, voiceId) {
   return voice;
 }
 
-/** A voice the user may preview and voice over with: their own, or an active VO Profile (library voice). */
-export async function usableVoice(ctx, userId, voiceId) {
+/**
+ * A voice the user may preview and voice over with: their own, or an active VO Profile (library voice).
+ * With `api`, a profile must also be allowed for the API (voice_profiles.api_allowed).
+ */
+export async function usableVoice(ctx, userId, voiceId, { api = false } = {}) {
   if (!isUuid(voiceId)) throw new ApiError('not_found', 'voice not found');
   let voice;
   try {
@@ -28,7 +31,10 @@ export async function usableVoice(ctx, userId, voiceId) {
     throw engineError(err);
   }
   if (voice.owner_ref === String(userId)) return voice;
-  if (voice.owner_ref === LIBRARY_OWNER && (await ctx.profiles.get(voice.id))) return voice;
+  if (voice.owner_ref === LIBRARY_OWNER) {
+    const profile = await ctx.profiles.get(voice.id);
+    if (profile && (!api || profile.api_allowed)) return voice;
+  }
   throw new ApiError('not_found', 'voice not found');
 }
 
