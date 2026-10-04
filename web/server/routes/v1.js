@@ -71,18 +71,19 @@ export function v1Router(ctx) {
       res.status(202).set('Idempotent-Replayed', 'true').json({ jobId: job.id, credits: job.credits, status: job.status });
       return;
     }
+    let charge = null;
     try {
       const voice = await usableVoice(ctx, userId, input.voiceId, { api: true });
       if (voice.status !== 'ready') throw new ApiError('voice_not_ready', `voice is ${voice.status}`);
       const webhook = await checkedWebhookUrl(webhookUrl);
       const credits = creditsFor(input.chars);
       const key = crypto.randomUUID();
-      const charge = await apiJobs.reserve(charges, { userId, revision: 1, kind: 'job', chars: input.chars, credits, holdId: `tts:${key}:r1` });
+      charge = await apiJobs.reserve(charges, { userId, revision: 1, kind: 'job', chars: input.chars, credits, holdId: `tts:${key}:r1` });
       let created;
       try {
         created = await queueVoiceover(ctx, {
           charge, key, userId, voice, text: input.text, chars: input.chars, settings,
-          source: 'api', apiKeyId: req.apiKey.id, webhookUrl: webhook,
+          source: 'api', apiKeyId: req.apiKey.id, webhookUrl: webhook, idemKey,
         });
       } catch (err) {
         if (err instanceof ApiError && err.code === 'insufficient_credits') {
@@ -90,10 +91,9 @@ export function v1Router(ctx) {
         }
         throw err;
       }
-      if (idemKey) await apiJobs.bindKey(userId, idemKey, created.id);
       res.status(202).json({ jobId: created.id, credits, status: 'queued' });
     } catch (err) {
-      if (idemKey) await apiJobs.releaseKey(userId, idemKey).catch(() => {});
+      if (idemKey) await apiJobs.releaseKey(userId, idemKey, charge?.id ?? null).catch(() => {});
       throw err;
     }
   });

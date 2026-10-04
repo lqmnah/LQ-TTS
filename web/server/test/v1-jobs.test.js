@@ -175,6 +175,67 @@ describe('/v1 voiceovers', () => {
     }
   });
 
+  // Fault injection: Postgres refuses to write a job id into the claim of `key` and, with `release`, to delete it
+  // (a request that dies after the hold). Scoped to the key, so other tests and files never trip it.
+  async function breakClaim(key, { release = false } = {}) {
+    await h.pool.query(`CREATE OR REPLACE FUNCTION test_break_claim() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN RAISE EXCEPTION 'injected claim fault'; END $$`);
+    await h.pool.query(`CREATE TRIGGER test_break_bind BEFORE UPDATE ON api_idempotency FOR EACH ROW
+      WHEN (NEW.idem_key = '${key}' AND NEW.job_id IS NOT NULL) EXECUTE FUNCTION test_break_claim()`);
+    if (release) {
+      await h.pool.query(`CREATE TRIGGER test_break_release BEFORE DELETE ON api_idempotency FOR EACH ROW
+        WHEN (OLD.idem_key = '${key}') EXECUTE FUNCTION test_break_claim()`);
+    }
+  }
+  async function createBroken(key, options) {
+    await breakClaim(key, options);
+    try {
+      return await create({}, { 'idempotency-key': key });
+    } finally {
+      await h.pool.query('DROP TRIGGER IF EXISTS test_break_bind ON api_idempotency; DROP TRIGGER IF EXISTS test_break_release ON api_idempotency');
+    }
+  }
+  // Time passing for what an aborted create leaves behind: its claim and its job-less hold (reconciliation's job).
+  const ageLeftovers = (key) => h.pool.query(
+    `WITH c AS (UPDATE api_idempotency SET created_at = now() - interval '3 minutes' WHERE user_id = 'budi' AND idem_key = $1)
+     UPDATE charges SET created_at = now() - interval '3 minutes' WHERE user_id = 'budi' AND job_id IS NULL AND state = 'held'`,
+    [key],
+  );
+
+  it('keeps the key claimed when the job cannot be recorded after the hold, so a retry neither queues nor holds again', async () => {
+    const failed = await createBroken('bind-fails');
+    expect(failed.status).toBe(500);
+    const ref = h.lq.state.callsTo('/credits/hold').at(-1).body.ref;
+    const { rows: [charge] } = await h.pool.query('SELECT state, job_id FROM charges WHERE hold_id = $1', [ref]);
+    expect(charge).toEqual({ state: 'held', job_id: null }); // reconciliation refunds it once it is 2 minutes old
+    const [holdsBefore, jobsBefore] = [holds(), h.engine.state.jobs.size];
+    const retry = await create({}, { 'idempotency-key': 'bind-fails' });
+    expect([retry.status, retry.body.error?.code]).toEqual([409, 'idempotency_conflict']);
+    expect([holds(), h.engine.state.jobs.size]).toEqual([holdsBefore, jobsBefore]);
+    await ageLeftovers('bind-fails');
+  });
+
+  it('never lets a claim whose job is recorded be taken over, even when the request dies before answering', async () => {
+    const failed = await createBroken('dies', { release: true });
+    expect(failed.status).toBe(500);
+    const engineJob = [...h.engine.state.jobs.keys()].at(-1);
+    const claimed = async () => (await h.pool.query(`SELECT job_id FROM api_idempotency WHERE user_id = 'budi' AND idem_key = 'dies'`)).rows[0].job_id;
+    const recorded = (await h.pool.query('SELECT 1 FROM jobs WHERE id = $1', [engineJob])).rowCount === 1;
+    // A recorded job is bound to its claim in the same transaction; an unbound claim means nothing was recorded.
+    expect(await claimed()).toBe(recorded ? engineJob : null);
+    await ageLeftovers('dies');
+    const retry = await create({}, { 'idempotency-key': 'dies' });
+    expect(retry.status).toBe(202);
+    expect(await claimed()).toBe(retry.body.jobId);
+    await h.pool.query(`UPDATE api_idempotency SET created_at = now() - interval '3 minutes' WHERE user_id = 'budi' AND idem_key = 'dies'`);
+    h.engine.setJob(retry.body.jobId, { status: 'done' });
+    await h.pool.query(`UPDATE jobs SET status = 'done' WHERE id = $1`, [retry.body.jobId]);
+    const before = holds();
+    const replay = await create({}, { 'idempotency-key': 'dies' });
+    expect([replay.status, replay.headers['idempotent-replayed'], replay.body.jobId]).toEqual([202, 'true', retry.body.jobId]);
+    expect(holds()).toBe(before);
+  });
+
   it('reports status, progress and download paths, and streams the files under their public names', async () => {
     const { body: { jobId } } = await create({});
     const queued = await budi.get(`/v1/tts/${jobId}`);

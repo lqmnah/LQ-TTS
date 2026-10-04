@@ -27,9 +27,12 @@ export function readJobInput(body, maxChars) {
 
 /**
  * Holds the already inserted charge, queues the engine job and records it with the charge. `key` is the engine
- * Idempotency-Key and the middle of the hold ref. An engine refusal refunds the hold at once.
+ * Idempotency-Key and the middle of the hold ref. An engine refusal refunds the hold at once. `idemKey`, a claimed
+ * /v1 Idempotency-Key, is bound to the job in the transaction that records it.
  */
-export async function queueVoiceover(ctx, { charge, key, userId, voice, text, chars, settings, source = 'web', apiKeyId = null, webhookUrl = null }) {
+export async function queueVoiceover(ctx, {
+  charge, key, userId, voice, text, chars, settings, source = 'web', apiKeyId = null, webhookUrl = null, idemKey = null,
+}) {
   const { charges, engine, jobsRepo, config } = ctx;
   await charges.hold(charge);
   let created;
@@ -43,7 +46,7 @@ export async function queueVoiceover(ctx, { charge, key, userId, voice, text, ch
   }
   await jobsRepo.insertWithCharge({
     id: created.id, userId, voiceId: voice.id, voiceName: voice.name, title: makeTitle(text), chars, chargeId: charge.id,
-    source, apiKeyId, webhookUrl,
+    source, apiKeyId, webhookUrl, idemKey,
   });
   return created;
 }

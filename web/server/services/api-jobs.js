@@ -87,11 +87,15 @@ export function createApiJobs(pool) {
       const { rows: [row] } = await pool.query('SELECT job_id FROM api_idempotency WHERE user_id = $1 AND idem_key = $2', [userId, key]);
       return row?.job_id ?? null;
     },
-    async bindKey(userId, key, jobId) {
-      await pool.query('UPDATE api_idempotency SET job_id = $3 WHERE user_id = $1 AND idem_key = $2', [userId, key, jobId]);
-    },
-    async releaseKey(userId, key) {
-      await pool.query('DELETE FROM api_idempotency WHERE user_id = $1 AND idem_key = $2 AND job_id IS NULL', [userId, key]);
+    // Frees a claim only when nothing is left behind: no job bound to it and the request's charge (if any) no longer
+    // held. A hold whose job went unrecorded keeps the claim until the 2-minute takeover, so a retry cannot hold again
+    // while reconciliation still owes that refund.
+    async releaseKey(userId, key, chargeId = null) {
+      await pool.query(
+        `DELETE FROM api_idempotency WHERE user_id = $1 AND idem_key = $2 AND job_id IS NULL
+           AND NOT EXISTS (SELECT 1 FROM charges WHERE id = $3 AND state = 'held')`,
+        [userId, key, chargeId],
+      );
     },
   };
 }

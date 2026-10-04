@@ -8,7 +8,8 @@ export const toSummary = (r) => ({
 
 export function createJobsRepo(pool) {
   return {
-    async insertWithCharge({ id, userId, voiceId, voiceName, title, chars, chargeId, source = 'web', apiKeyId = null, webhookUrl = null }) {
+    // idemKey: the caller's claimed api_idempotency row, bound here so a recorded job is never without its claim.
+    async insertWithCharge({ id, userId, voiceId, voiceName, title, chars, chargeId, source = 'web', apiKeyId = null, webhookUrl = null, idemKey = null }) {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
@@ -18,6 +19,9 @@ export function createJobsRepo(pool) {
           [id, userId, voiceId, voiceName, title, chars, source, apiKeyId, webhookUrl],
         );
         await client.query('UPDATE charges SET job_id = $1 WHERE id = $2', [id, chargeId]);
+        if (idemKey !== null) {
+          await client.query('UPDATE api_idempotency SET job_id = $1 WHERE user_id = $2 AND idem_key = $3', [id, userId, idemKey]);
+        }
         await client.query('COMMIT');
       } catch (err) {
         await client.query('ROLLBACK');
