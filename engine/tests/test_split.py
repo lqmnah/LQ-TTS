@@ -98,3 +98,20 @@ def test_is_single_sentence():
 )
 def test_style_never_spreads_to_other_sentences(script, expected):
     assert [(u.text, u.style) for u in split_script(script)] == expected
+
+
+def test_unpunctuated_script_is_cut_into_bounded_units_at_spaces():
+    text = "{{style: tegas}} " + " ".join(["kata"] * 4000)
+    units = split_script(text)
+    assert len(units) > 40
+    assert max(len(u.text) for u in units) <= 400
+    assert " ".join(u.text for u in units).split() == ["kata"] * 4000
+    assert {u.style for u in units} == {"tegas"}
+    assert [u.paragraph_end for u in units] == [False] * (len(units) - 1) + [True]
+    assert [u.idx for u in units] == list(range(len(units)))
+
+
+def test_long_unit_prefers_to_break_after_a_comma():
+    units = split_script("satu dua tiga empat, " * 60)
+    assert len(units) > 1 and max(len(u.text) for u in units) <= 400
+    assert all(u.text.endswith(",") for u in units[:-1])

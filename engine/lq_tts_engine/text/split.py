@@ -11,6 +11,8 @@ _STYLE = re.compile(r"\{\{\s*style\s*:\s*(.*?)\s*\}\}", re.IGNORECASE | re.DOTAL
 _END = re.compile(r"[.?!]+[\"'”’)\]]*(?=\s|$)")
 _WORD = re.compile(r"\w+")
 _PARA = re.compile(r"\n\s*\n")
+MAX_UNIT_CHARS = 400  # one synthesis call; a 20,000-character unit without punctuation would exhaust memory
+_SOFT_BREAK = re.compile(r"[,;:]\s")
 
 
 @dataclass(frozen=True)
@@ -43,6 +45,23 @@ def _sentences_in(chunk: str) -> list[str]:
     if tail:
         out.append(tail)
     return out
+
+
+def _cap(sentence: str, limit: int = MAX_UNIT_CHARS) -> list[str]:
+    """Cuts a unit longer than limit after its last comma/semicolon/colon, else at its last space, else hard."""
+    pieces: list[str] = []
+    rest = sentence
+    while len(rest) > limit:
+        window = rest[: limit + 1]
+        cut = max((m.end() for m in _SOFT_BREAK.finditer(window)), default=0)
+        if cut < limit // 2:
+            space = window.rfind(" ")
+            cut = space + 1 if space > 0 else limit
+        pieces.append(rest[:cut].strip())
+        rest = rest[cut:].strip()
+    if rest:
+        pieces.append(rest)
+    return pieces
 
 
 def split_script(text: str) -> list[Unit]:
@@ -80,8 +99,9 @@ def split_script(text: str) -> list[Unit]:
         if buf:
             flush(buf, buf_style)
 
-        for n, (sentence, style) in enumerate(merged):
-            units.append(Unit(len(units), p_idx, sentence, style, n == len(merged) - 1))
+        capped = [(piece, style) for sentence, style in merged for piece in _cap(sentence)]
+        for n, (sentence, style) in enumerate(capped):
+            units.append(Unit(len(units), p_idx, sentence, style, n == len(capped) - 1))
     return units
 
 

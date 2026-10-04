@@ -54,3 +54,9 @@ def test_vtt_format():
         "00:00:00.000 --> 00:00:01.250\nCoba jujur deh.\n\n"
         "01:01:01.500 --> 01:01:02.000\nSatu jam.\n\n"
     )
+
+
+def test_cue_text_cannot_break_out_of_its_cue():
+    cue = [Cue(0.0, 1.0, "a < b --> c & d\n\nnext")]
+    assert to_srt(cue) == "1\n00:00:00,000 --> 00:00:01,000\na ‹ b --› c & d next\n\n"
+    assert to_vtt(cue) == "WEBVTT\n\n00:00:00.000 --> 00:00:01.000\na &lt; b --&gt; c &amp; d next\n\n"
