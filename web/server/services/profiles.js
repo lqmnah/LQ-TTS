@@ -52,6 +52,10 @@ export function createProfiles(pool) {
       const { rowCount } = await pool.query('UPDATE voice_profiles SET active = false WHERE slug = $1', [slug]);
       return rowCount > 0;
     },
+    async setApiAllowed(slug, allowed) {
+      const { rowCount } = await pool.query('UPDATE voice_profiles SET api_allowed = $2 WHERE slug = $1', [slug, allowed]);
+      return rowCount > 0;
+    },
   };
 }
 

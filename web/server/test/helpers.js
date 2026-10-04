@@ -23,6 +23,7 @@ const user = (id, extra = {}) => ({
 export const USERS = {
   ana: user('ana'),
   budi: user('budi', { plan: 'pro', paid: true, balance: 1000 }),
+  cici: user('cici', { plan: 'ultra', paid: true, balance: 1000 }),
   tfa: user('tfa', { totp: '123456' }),
   unverified: user('unverified', { verified: false }),
   suspended: user('suspended', { suspended: true }),
@@ -93,6 +94,18 @@ export async function startHarness({ env = {}, app: appOptions = {} } = {}) {
         patch: (p, body) => go(request(app).patch(p)).send(body ?? {}),
         del: (p) => go(request(app).delete(p)),
         upload: (p) => go(request(app).post(p)),
+      };
+    },
+    // A live API key for the user, made through the store (the browser route needs a session).
+    async apiKey(userId = 'budi', { tv = 0 } = {}) {
+      return (await ctx.apiKeys.create(userId, { name: 'test key', tv })).key;
+    },
+    api(key) {
+      const go = (r) => (key ? r.set('authorization', `Bearer ${key}`) : r);
+      return {
+        get: (p) => go(request(app).get(p)),
+        post: (p, body) => go(request(app).post(p)).send(body ?? {}),
+        del: (p) => go(request(app).delete(p)),
       };
     },
     async close() {

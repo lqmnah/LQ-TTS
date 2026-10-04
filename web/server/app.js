@@ -11,6 +11,7 @@ import { jobActionsRouter } from './routes/job-actions.js';
 import { jobsRouter } from './routes/jobs.js';
 import { meRouter } from './routes/me.js';
 import { mountClient } from './routes/static.js';
+import { v1Router } from './routes/v1.js';
 import { voicesRouter } from './routes/voices.js';
 import { voiceProfilesRouter } from './routes/voice-profiles.js';
 
@@ -23,6 +24,11 @@ export function createApp(ctx, { healthCacheMs = 10000, sseKeepaliveMs = 15000 }
     res.set('X-Frame-Options', 'DENY');
     next();
   });
+  // The spec's browser addresses (tts.lq-studio.com/api and /api/docs); the JSON API has no GET /api of its own.
+  app.get('/api', (req, res) => res.redirect(302, '/api-keys'));
+  app.get('/api/docs', (req, res) => res.redirect(302, '/developers'));
+  // Server-to-server API: Bearer keys only, before (so never behind) the cookie, CSRF and session middleware.
+  app.use('/v1', v1Router(ctx));
   app.use('/api', callbackRouter(ctx));
   app.use('/api', express.json({ limit: '256kb' }));
   app.use('/api', csrf);
