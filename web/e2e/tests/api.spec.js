@@ -167,9 +167,14 @@ test('api: key from the UI, voiceover through /v1, webhook or polling, download,
     await assertLayout(page, { width: 1440 });
     await page.screenshot({ path: new URL('docs-1440.png', ARTIFACTS).pathname, fullPage: true, animations: 'disabled' });
 
-    // 7. Delete through the API (a done job is deleted, its charge stays settled)
+    // 7. Money moved exactly once: one settled charge for this job, then delete it through the API
+    //    (a done job is deleted, its charge stays settled)
+    const charges = async () => (await apiCall(page, 'GET', '/credits')).json.usage
+      .filter((u) => u.jobId === jobId).map(({ state, credits: amount }) => ({ state, credits: amount }));
+    await expect.poll(charges).toEqual([{ state: 'settled', credits }]);
     expect((await v1('DELETE', `/tts/${jobId}`)).status).toBe(204);
     expect((await v1('GET', `/tts/${jobId}`)).status).toBe(404);
+    expect(await charges()).toEqual([{ state: 'settled', credits }]);
   } finally {
     await receiver?.close();
   }

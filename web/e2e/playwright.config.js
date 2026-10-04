@@ -24,9 +24,10 @@ export default defineConfig({
   },
   projects: [
     { name: 'journey', testMatch: /journey\.spec\.js/ },
-    { name: 'screens', testMatch: /screens\.spec\.js/, dependencies: ['journey'] },
-    { name: 'smoke', testMatch: /smoke\.spec\.js/ },
+    // api runs before screens: screens (1440) deletes journey's cloned voice, which the api spec uses on staging.
     { name: 'api', testMatch: /api\.spec\.js/, dependencies: ['journey'] },
+    { name: 'screens', testMatch: /screens\.spec\.js/, dependencies: ['journey', 'api'] },
+    { name: 'smoke', testMatch: /smoke\.spec\.js/ },
   ],
   webServer: target.webServer,
 });
