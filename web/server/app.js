@@ -1,6 +1,7 @@
 import express from 'express';
 import { csrf, requireAuth } from './http/middleware.js';
 import { ApiError, errorHandler } from './lib/errors.js';
+import { apiKeysRouter } from './routes/api-keys.js';
 import { authRouter } from './routes/auth.js';
 import { callbackRouter } from './routes/callback.js';
 import { creditsRouter } from './routes/credits.js';
@@ -35,6 +36,7 @@ export function createApp(ctx, { healthCacheMs = 10000, sseKeepaliveMs = 15000 }
   app.use('/api', jobActionsRouter(ctx));
   app.use('/api', eventsRouter(ctx, { keepaliveMs: sseKeepaliveMs }));
   app.use('/api', creditsRouter(ctx));
+  app.use('/api', apiKeysRouter(ctx));
   app.use('/api', () => {
     throw new ApiError('not_found', 'no such endpoint');
   });
