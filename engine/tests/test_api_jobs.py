@@ -173,3 +173,19 @@ def test_callback_url_must_be_loopback_or_allowed_for_the_caller(client, cfg, re
     hosts = {"lq-tts": frozenset({"hooks.example.com"})}
     allowed = TestClient(create_app(Config(**{**cfg.__dict__, "callback_hosts": hosts}), repo))
     assert post_job(allowed, ready_voice, callback_url="https://hooks.example.com/cb").status_code == 202
+
+
+def stored_priority(repo, response):
+    assert response.status_code == 202, response.text
+    return repo.get_job_any(uuid.UUID(response.json()["id"]))["priority"]
+
+
+def test_priority_is_optional_and_clamped_to_the_callers_range(client, cfg, repo, ready_voice):
+    assert stored_priority(repo, post_job(client, ready_voice)) == 5
+    assert stored_priority(repo, post_job(client, ready_voice, priority=1)) == 1
+    assert stored_priority(repo, post_job(client, ready_voice, priority=0)) == 1
+    assert stored_priority(repo, post_job(client, ready_voice, priority=9)) == 5
+    narrow = TestClient(create_app(Config(**{**cfg.__dict__, "priority_ranges": {"lq-tts": (2, 2)}}), repo))
+    assert stored_priority(repo, post_job(narrow, ready_voice, priority=5)) == 2
+    r = post_job(client, ready_voice, priority="high")
+    assert r.status_code == 400 and r.json()["error"]["code"] == "invalid_request"

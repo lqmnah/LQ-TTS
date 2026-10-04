@@ -16,7 +16,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from ..callbacks import callback_url_allowed
-from ..config import Config, load_config
+from ..config import Config, load_config, priority_for
 from ..db import make_pool, migrate
 from ..pipeline import job_dir, latest_revision, revision_dir
 from ..repo import NotRegeneratable, Repo
@@ -124,6 +124,7 @@ class JobIn(BaseModel):
     text: str
     settings: dict[str, Any] = {}
     callback_url: str | None = None
+    priority: int | None = None  # clamped per caller (config.priority_for); absent = the web level
 
 
 class RegenerateIn(BaseModel):
@@ -319,7 +320,8 @@ def register_job_routes(app: FastAPI, cfg: Config, repo: Repo, *, caller, need_d
         if not units:
             raise ApiError(400, "invalid_text", "no sentences found")
         job, _ = repo.create_job(caller=who, voice_id=body.voice_id, text=text, settings=settings.model_dump(),
-                                 callback_url=body.callback_url, idempotency_key=key, units=units)
+                                 callback_url=body.callback_url, idempotency_key=key, units=units,
+                                 priority=priority_for(cfg, who, body.priority))
         return accepted(job)
 
     @app.get("/v1/jobs/{job_id}")

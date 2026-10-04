@@ -7,9 +7,9 @@ from tests.conftest import sql
 TEXT = "Kalimat pertama di sini. Kalimat kedua di sini.\n\nParagraf baru mulai sekarang."
 
 
-def new_job(repo, voice, text=TEXT):
+def new_job(repo, voice, text=TEXT, priority=5):
     job, _ = repo.create_job(caller="lq-tts", voice_id=voice["id"], text=text, settings={}, callback_url=None,
-                             idempotency_key=None, units=split_script(text))
+                             idempotency_key=None, units=split_script(text), priority=priority)
     return job
 
 
@@ -169,3 +169,20 @@ def test_delete_voice_cascade_marks_jobs_deleted(repo, ready_voice):
     assert jobs[queued["id"]]["status"] == "canceled"
     assert repo.get_voice_any(ready_voice["id"])["deleted_at"] is not None
     assert repo.delete_voice_cascade("lq-tts", ready_voice["id"]) is None
+
+
+def test_web_jobs_are_claimed_before_older_api_jobs(repo, ready_voice):
+    api = new_job(repo, ready_voice, priority=1)
+    sql(repo, "UPDATE jobs SET created_at = now() - interval '5 minutes' WHERE id=%s", (api["id"],))
+    web = new_job(repo, ready_voice)
+    assert repo.queue_position(api["id"]) == 1 and repo.queue_position(web["id"]) == 0
+    assert repo.chars_ahead(api["id"]) == web["chars"]
+    assert [repo.claim_job()["id"], repo.claim_job()["id"]] == [web["id"], api["id"]]
+
+
+def test_an_api_job_waiting_over_ten_minutes_ranks_as_a_web_job(repo, ready_voice):
+    starved = new_job(repo, ready_voice, priority=1)
+    sql(repo, "UPDATE jobs SET created_at = now() - interval '11 minutes' WHERE id=%s", (starved["id"],))
+    web = new_job(repo, ready_voice)
+    assert repo.queue_position(starved["id"]) == 0 and repo.queue_position(web["id"]) == 1
+    assert repo.claim_job()["id"] == starved["id"]

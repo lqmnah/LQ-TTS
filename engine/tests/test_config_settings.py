@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from lq_tts_engine.config import load_config
+from lq_tts_engine.config import load_config, priority_for
 from lq_tts_engine.settings import JobSettings
 
 BASE_ENV = {
@@ -97,3 +97,20 @@ def test_callback_hosts_that_can_never_match_are_rejected(entry):
 def test_callback_hosts_accept_bare_ipv6():
     cfg = load_config({**BASE_ENV, "LQTTS_CALLBACK_HOSTS": "lq-studio:FD00::5"})
     assert cfg.callback_hosts == {"lq-studio": frozenset({"fd00::5"})}
+
+
+def test_priority_ranges_are_per_caller_and_optional():
+    assert load_config(BASE_ENV).priority_ranges == {}
+    cfg = load_config({**BASE_ENV, "LQTTS_PRIORITY_RANGES": "lq-studio:3-3"})
+    assert cfg.priority_ranges == {"lq-studio": (3, 3)}
+    with pytest.raises(ValueError, match="LQTTS_PRIORITY_RANGES: unknown caller nobody"):
+        load_config({**BASE_ENV, "LQTTS_PRIORITY_RANGES": "nobody:1-5"})
+    for bad in ("5-1", "1", "a-5", "0-10", "-1-5"):
+        with pytest.raises(ValueError, match="LQTTS_PRIORITY_RANGES: lq-tts: expected"):
+            load_config({**BASE_ENV, "LQTTS_PRIORITY_RANGES": f"lq-tts:{bad}"})
+
+
+def test_priority_for_clamps_to_the_callers_range():
+    cfg = load_config({**BASE_ENV, "LQTTS_PRIORITY_RANGES": "lq-studio:3-3"})
+    assert [priority_for(cfg, "lq-tts", p) for p in (None, 0, 1, 5, 9, 10)] == [5, 1, 1, 5, 5, 5]
+    assert [priority_for(cfg, "lq-studio", p) for p in (None, 1, 9)] == [3, 3, 3]

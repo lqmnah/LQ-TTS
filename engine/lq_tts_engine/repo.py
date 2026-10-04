@@ -7,9 +7,19 @@ from typing import Any
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
+from .config import DEFAULT_PRIORITY
 from .text.split import Unit
 
 Row = dict[str, Any]
+STARVED_AFTER_S = 600
+
+
+def _rank(alias: str) -> str:
+    """Queue rank of a queued job: its priority, lifted to DEFAULT_PRIORITY once a lower-priority (API) job has waited
+    STARVED_AFTER_S, so API work behind a steady stream of web jobs still runs. Regenerates (10) stay ahead."""
+    return (f"(CASE WHEN {alias}.priority < {DEFAULT_PRIORITY} "
+            f"AND {alias}.created_at < now() - interval '{STARVED_AFTER_S} seconds' "
+            f"THEN {DEFAULT_PRIORITY} ELSE {alias}.priority END)")
 
 
 class NotRegeneratable(Exception):
@@ -84,7 +94,7 @@ class Repo:
 
     # ---- jobs ---------------------------------------------------------------
     def create_job(self, *, caller, voice_id, text, settings: dict, callback_url, idempotency_key,
-                   units: Sequence[Unit]) -> tuple[Row, bool]:
+                   units: Sequence[Unit], priority: int = DEFAULT_PRIORITY) -> tuple[Row, bool]:
         with self.pool.connection() as conn, conn.transaction():
             if idempotency_key:
                 conn.execute(
@@ -101,9 +111,10 @@ class Repo:
                         return existing, False
                     conn.execute("UPDATE jobs SET idempotency_key=NULL WHERE id=%s", (existing["id"],))
             job = conn.execute(
-                "INSERT INTO jobs (id, voice_id, caller, text, settings, callback_url, idempotency_key, chars) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING *",
-                (uuid.uuid4(), voice_id, caller, text, Jsonb(settings), callback_url, idempotency_key, len(text)),
+                "INSERT INTO jobs (id, voice_id, caller, text, settings, callback_url, idempotency_key, chars, priority) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING *",
+                (uuid.uuid4(), voice_id, caller, text, Jsonb(settings), callback_url, idempotency_key, len(text),
+                 priority),
             ).fetchone()
             with conn.cursor() as cur:
                 cur.executemany(
@@ -139,8 +150,8 @@ class Repo:
         return self._one(
             "UPDATE jobs SET status='running', lease_until = now() + %s * interval '1 second', "
             "started_at = coalesce(started_at, now()) "
-            "WHERE id = (SELECT id FROM jobs WHERE status='queued' "
-            "            ORDER BY priority DESC, created_at FOR UPDATE SKIP LOCKED LIMIT 1) "
+            "WHERE id = (SELECT q.id FROM jobs q WHERE q.status='queued' "
+            f"            ORDER BY {_rank('q')} DESC, q.created_at FOR UPDATE SKIP LOCKED LIMIT 1) "
             "RETURNING *",
             (lease_s,),
         )
@@ -263,7 +274,7 @@ class Repo:
     def queue_position(self, job_id) -> int:
         row = self._one(
             "SELECT count(q.id) AS n FROM jobs j JOIN jobs q ON q.status='queued' AND q.deleted_at IS NULL "
-            "AND (q.priority > j.priority OR (q.priority = j.priority AND q.created_at < j.created_at)) "
+            f"AND ({_rank('q')} > {_rank('j')} OR ({_rank('q')} = {_rank('j')} AND q.created_at < j.created_at)) "
             "WHERE j.id=%s AND j.status='queued'",
             (job_id,),
         )
@@ -272,8 +283,8 @@ class Repo:
     def chars_ahead(self, job_id) -> int:
         row = self._one(
             "SELECT coalesce(sum(q.chars), 0) AS n FROM jobs j JOIN jobs q ON q.deleted_at IS NULL AND q.id <> j.id "
-            "AND (q.status='running' OR (q.status='queued' AND (q.priority > j.priority "
-            "     OR (q.priority = j.priority AND q.created_at < j.created_at)))) "
+            f"AND (q.status='running' OR (q.status='queued' AND ({_rank('q')} > {_rank('j')} "
+            f"     OR ({_rank('q')} = {_rank('j')} AND q.created_at < j.created_at)))) "
             "WHERE j.id=%s",
             (job_id,),
         )

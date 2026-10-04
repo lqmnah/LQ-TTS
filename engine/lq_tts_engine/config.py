@@ -40,6 +40,25 @@ def _pairs(raw: str, name: str) -> dict[str, str]:
     return out
 
 
+DEFAULT_PRIORITY = 5  # the web level; a job created without "priority" gets it, so older callers keep their place
+DEFAULT_PRIORITY_RANGE = (1, 5)  # what any caller may ask for unless LQTTS_PRIORITY_RANGES says otherwise
+MAX_CALLER_PRIORITY = 9  # 10 is the regenerate lane (Repo.request_regenerate); no caller may create jobs there
+
+
+def _priority_range(caller: str, raw: str) -> tuple[int, int]:
+    low, sep, high = raw.partition("-")
+    if not sep or not low.isdigit() or not high.isdigit() or not 0 <= int(low) <= int(high) <= MAX_CALLER_PRIORITY:
+        raise ValueError(f"LQTTS_PRIORITY_RANGES: {caller}: expected 'low-high' with "
+                         f"0 <= low <= high <= {MAX_CALLER_PRIORITY}")
+    return int(low), int(high)
+
+
+def priority_for(cfg: Config, caller: str, requested: int | None) -> int:
+    """Queue priority of a new job: the caller's request (DEFAULT_PRIORITY when absent) clamped to its range."""
+    low, high = cfg.priority_ranges.get(caller, DEFAULT_PRIORITY_RANGE)
+    return min(max(DEFAULT_PRIORITY if requested is None else requested, low), high)
+
+
 @dataclass(frozen=True)
 class Config:
     database_url: str
@@ -51,6 +70,7 @@ class Config:
     whisper_model: str
     min_free_gb: float
     callback_hosts: dict[str, frozenset[str]] = field(default_factory=dict)
+    priority_ranges: dict[str, tuple[int, int]] = field(default_factory=dict)
 
 
 def load_config(env: Mapping[str, str] | None = None) -> Config:
@@ -78,6 +98,11 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
         if caller not in caller_tokens:
             raise ValueError(f"LQTTS_CALLBACK_HOSTS: unknown caller {caller}")
         callback_hosts[caller] = _callback_hosts(caller, hosts)
+    priority_ranges: dict[str, tuple[int, int]] = {}
+    for caller, raw in _pairs(env.get("LQTTS_PRIORITY_RANGES") or "", "LQTTS_PRIORITY_RANGES").items():
+        if caller not in caller_tokens:
+            raise ValueError(f"LQTTS_PRIORITY_RANGES: unknown caller {caller}")
+        priority_ranges[caller] = _priority_range(caller, raw)
     return Config(
         database_url=get("LQTTS_DATABASE_URL"),
         schema=get("LQTTS_SCHEMA", "lq_tts_engine"),
@@ -88,4 +113,5 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
         whisper_model=get("LQTTS_WHISPER_MODEL", "small"),
         min_free_gb=float(get("LQTTS_MIN_FREE_GB", "20")),
         callback_hosts=callback_hosts,
+        priority_ranges=priority_ranges,
     )
