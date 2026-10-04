@@ -14,9 +14,9 @@ export const ENDPOINTS = [
   ['DELETE', '/v1/tts/{jobId}', 'delete'],
 ];
 
-/** [code, HTTP status]; the text is docs.error.<code>. */
+/** [code, HTTP status (or statuses)]; the text is docs.error.<code>. */
 export const ERRORS = [
-  ['invalid_request', 400], ['invalid_webhook_url', 400], ['unauthorized', 401], ['insufficient_credits', 402],
+  ['invalid_request', '400, 415'], ['invalid_webhook_url', 400], ['unauthorized', 401], ['insufficient_credits', 402],
   ['plan_required', 403], ['suspended', 403], ['needs_verification', 403], ['not_found', 404], ['voice_not_ready', 409],
   ['idempotency_conflict', 409], ['too_large', 413], ['too_many_jobs', 429], ['rate_limited', 429],
   ['internal_error', 500], ['lqstudio_unavailable', 503], ['engine_unavailable', 503],
@@ -69,8 +69,9 @@ export function verifyLqttsWebhook(rawBody, signatureHeader, secret, toleranceSe
   const t = Number(parts.t);
   if (!Number.isInteger(t) || Math.abs(Date.now() / 1000 - t) > toleranceSeconds) return false;
   const expected = crypto.createHmac('sha256', secret).update(\`\${t}.\${rawBody}\`).digest('hex');
-  const given = String(parts.v1 ?? '');
-  return given.length === expected.length && crypto.timingSafeEqual(Buffer.from(given), Buffer.from(expected));
+  const given = Buffer.from(String(parts.v1 ?? ''));
+  const wanted = Buffer.from(expected);
+  return given.length === wanted.length && crypto.timingSafeEqual(given, wanted);
 }`,
   verifyPython: `import hashlib
 import hmac
@@ -87,5 +88,5 @@ def verify_lqtts_webhook(raw_body: bytes, signature_header: str, secret: str, to
     if abs(time.time() - t) > tolerance_seconds:
         return False
     expected = hmac.new(secret.encode(), f"{t}.".encode() + raw_body, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(expected, parts.get("v1", ""))`,
+    return hmac.compare_digest(expected.encode(), parts.get("v1", "").encode())`,
 };
