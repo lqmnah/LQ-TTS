@@ -11,13 +11,17 @@ if (!/^https:\/\/demo\.lq-studio\.com\/?$/.test(process.env.PUBLIC_URL ?? '')) {
   console.error('refusing: PUBLIC_URL is not LQ-Studio staging');
   process.exit(2);
 }
-if (!process.env.JWT_SECRET) {
-  console.error('refusing: JWT_SECRET missing');
-  process.exit(2);
-}
 
 const db = await import('/app/server/infra/db.js');
 const twofa = await import('/app/server/services/akun/twofa.js');
+// LQ-Studio encrypts the TOTP seed with DATA_ENC_KEY (not JWT_SECRET); fail fast when the key is absent.
+const dataCrypto = await import('/app/server/infra/data-crypto.js');
+try {
+  dataCrypto.pasangKunciData();
+} catch (err) {
+  console.error(`refusing: ${err.message}`);
+  process.exit(2);
+}
 
 const IDENT = 'tts-e2e';
 const TARGET_BALANCE = 500;
@@ -45,7 +49,7 @@ const user = {
   phoneVerifiedAt: existing?.phoneVerifiedAt ?? now,
   suspended: false,
   totpEnabled: true,
-  totpSecret: twofa.encryptSecret(secret, process.env.JWT_SECRET),
+  totpSecret: dataCrypto.encryptData(secret, 'totp'),
   totpPending: null,
   totpBackupCodes: [],
   totpLastStep: 0,
