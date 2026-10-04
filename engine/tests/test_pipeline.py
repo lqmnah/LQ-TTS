@@ -106,7 +106,7 @@ def test_speed_setting_slows_sentences(repo, ready_voice, tmp_path):
 
 def test_voice_not_ready_fails_job(repo, ready_voice, tmp_path):
     deps, job = setup(repo, ready_voice, tmp_path)
-    repo.soft_delete_voice("lq-tts", ready_voice["id"])
+    repo.delete_voice_cascade("lq-tts", ready_voice["id"])
     assert run_job(job, deps, should_stop=never) == "failed"
     j = repo.get_job_any(job["id"])
     assert (j["status"], j["error_code"]) == ("failed", "voice_not_ready")

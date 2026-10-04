@@ -143,7 +143,7 @@ def test_job_deleted_during_assembly_is_purged(repo, ready_voice, tmp_path, monk
 def test_deleted_job_with_missing_voice_is_purged(repo, ready_voice, tmp_path):
     deps, job = make(repo, ready_voice, tmp_path)
     repo.delete_job("lq-tts", job["id"])
-    repo.soft_delete_voice("lq-tts", ready_voice["id"])
+    repo.delete_voice_cascade("lq-tts", ready_voice["id"])
     rec = Recorder()
     handle_job(job, deps, rec, device="cpu")
     assert repo.get_job_any(job["id"]) is None and not job_dir(deps.data_dir, job["id"]).exists()
@@ -152,7 +152,7 @@ def test_voice_deleted_during_prep_stays_deleted(repo, tmp_path):
     vid, deps = _voice(repo, tmp_path, 30.0, steady_words(2.0, 16.0, gap=0.3))
     class DeletingTranscriber(FakeTranscriber):
         def transcribe(self, path, language, vad=False):
-            repo.soft_delete_voice("lq-tts", vid)
+            repo.delete_voice_cascade("lq-tts", vid)
             return super().transcribe(path, language, vad=vad)
     deps.asr = DeletingTranscriber(voice_words=steady_words(2.0, 16.0, gap=0.3), duration=30.0)
     handle_voice(repo.get_voice_any(vid), deps)

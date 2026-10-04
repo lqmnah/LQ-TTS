@@ -78,3 +78,10 @@ def test_callback_hosts_are_per_caller_and_optional():
     assert cfg.callback_hosts == {"lq-studio": frozenset({"hooks.example.com", "10.0.0.5"})}
     with pytest.raises(ValueError, match="unknown caller nobody"):
         load_config({**BASE_ENV, "LQTTS_CALLBACK_HOSTS": "nobody:x.example"})
+
+
+def test_duplicate_token_or_caller_fails_at_startup():
+    with pytest.raises(ValueError, match="callers lq-tts and lq-studio share one token"):
+        load_config({**BASE_ENV, "LQTTS_TOKENS": "lq-tts:same,lq-studio:same"})
+    with pytest.raises(ValueError, match="LQTTS_TOKENS: lq-tts is listed twice"):
+        load_config({**BASE_ENV, "LQTTS_TOKENS": "lq-tts:tok-a,lq-tts:tok-b"})

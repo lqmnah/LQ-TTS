@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from lq_tts_engine.api import app as api_module
 from lq_tts_engine.api.app import caller_for, create_app
 from lq_tts_engine.config import Config
+from tests.conftest import sql
 
 TOKEN, OTHER = "tok-lqtts", "tok-studio"
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
@@ -165,3 +166,24 @@ def test_token_lookup_accepts_only_exact_tokens():
     assert caller_for(tokens, TOKEN) == "lq-tts" and caller_for(tokens, OTHER) == "lq-studio"
     for wrong in (TOKEN[:-1], TOKEN + "x", TOKEN.upper(), "", TOKEN + "\0"):
         assert caller_for(tokens, wrong) is None
+
+
+def test_other_caller_cannot_list_preview_or_delete_a_voice(client, repo, tmp_path, cfg):
+    vid = uuid.UUID(upload(client, tmp_path).json()["id"])
+    ref = cfg.data_dir / "voices" / str(vid) / "ref.wav"
+    sf.write(ref, np.zeros(48000, dtype=np.float32), 48000)
+    repo.voice_ready(vid, ref_audio_path=str(ref), ref_transcript="halo", ref_seconds=1.0,
+                     clip_start_s=0.0, clip_end_s=1.0, language="id")
+    other = {"Authorization": f"Bearer {OTHER}"}
+    assert client.get("/v1/voices?owner_ref=user-1", headers=other).json() == []
+    assert client.get(f"/v1/voices/{vid}/preview.wav", headers=other).status_code == 404
+    assert client.delete(f"/v1/voices/{vid}", headers=other).status_code == 404
+    assert repo.get_voice("lq-tts", vid) is not None and ref.exists()
+
+
+def test_health_is_503_when_the_worker_heartbeat_is_stale(client, repo):
+    repo.heartbeat(model_loaded=True, device="mps", rtf=None)
+    sql(repo, "UPDATE worker_state SET beat_at = now() - interval '61 seconds'")
+    r = client.get("/v1/health")
+    assert r.status_code == 503 and r.json()["error"]["code"] == "model_loading"
+    assert r.json()["health"]["worker_heartbeat_age_s"] >= 60

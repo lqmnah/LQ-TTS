@@ -48,12 +48,6 @@ class Repo:
             (caller, owner_ref),
         )
 
-    def soft_delete_voice(self, caller, voice_id) -> bool:
-        return self._one(
-            "UPDATE voices SET deleted_at=now() WHERE id=%s AND caller=%s AND deleted_at IS NULL RETURNING id",
-            (voice_id, caller),
-        ) is not None
-
     def delete_voice_cascade(self, caller, voice_id) -> list[Row] | None:
         """Soft-delete a voice and delete_job every live job made with it, in one transaction."""
         with self.pool.connection() as conn, conn.transaction():

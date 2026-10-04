@@ -24,7 +24,7 @@ def test_voice_lifecycle_and_caller_isolation(repo):
     assert (v["status"], v["language"], v["clip_end_s"]) == ("ready", "id", 14.25)
     assert repo.next_voice_to_prepare() is None
     assert [x["id"] for x in repo.list_voices("lq-tts", "user-1")] == [vid]
-    assert repo.soft_delete_voice("lq-tts", vid) is True
+    assert repo.delete_voice_cascade("lq-tts", vid) == []
     assert repo.get_voice("lq-tts", vid) is None and repo.list_voices("lq-tts", "user-1") == []
     assert repo.get_voice_any(vid)["deleted_at"] is not None
 

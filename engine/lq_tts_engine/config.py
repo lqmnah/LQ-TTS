@@ -16,6 +16,8 @@ def _pairs(raw: str, name: str) -> dict[str, str]:
         key, sep, value = item.partition(":")
         if not sep or not key or not value:
             raise ValueError(f"{name}: expected 'name:value' pairs, got {item!r}")
+        if key in out:
+            raise ValueError(f"{name}: {key} is listed twice")
         out[key] = value
     return out
 
@@ -44,7 +46,11 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
         return value
 
     caller_tokens = _pairs(get("LQTTS_TOKENS"), "LQTTS_TOKENS")
-    tokens = {token: caller for caller, token in caller_tokens.items()}
+    tokens: dict[str, str] = {}
+    for caller, token in caller_tokens.items():
+        if token in tokens:
+            raise ValueError(f"LQTTS_TOKENS: callers {tokens[token]} and {caller} share one token")
+        tokens[token] = caller
     callback_secrets = _pairs(get("LQTTS_CALLBACK_SECRETS"), "LQTTS_CALLBACK_SECRETS")
     for caller in sorted(caller_tokens):
         if caller not in callback_secrets:
