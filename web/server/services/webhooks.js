@@ -28,7 +28,8 @@ export function createWebhooks(ctx, { timeoutMs = DELIVERY_TIMEOUT_MS, lookup } 
   async function onTerminal(jobId, { status, revision }) {
     if (revision !== 1 || !EVENTS[status]) return false;
     const job = await jobsRepo.get(jobId);
-    if (!job || job.source !== 'api' || !job.webhook_url || !job.api_key_id) return false;
+    // A voiceover deleted before its callback has no files to report, and its owner has already let it go.
+    if (!job || job.deleted_at || job.source !== 'api' || !job.webhook_url || !job.api_key_id) return false;
     const { rows: [pending] } = await pool.query(
       `SELECT EXISTS (SELECT 1 FROM webhook_deliveries WHERE job_id = $1) AS recorded,
               EXISTS (SELECT 1 FROM charges WHERE job_id = $1 AND state = 'held' AND revision <= $2) AS held`,

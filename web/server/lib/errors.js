@@ -15,6 +15,7 @@ export const STATUS = Object.freeze({
   not_regeneratable: 409,
   voice_not_ready: 409,
   idempotency_conflict: 409,
+  busy: 409,
   too_large: 413,
   unsupported_audio: 415,
   rate_limited: 429,

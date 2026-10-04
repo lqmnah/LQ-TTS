@@ -49,9 +49,14 @@ export function callbackRouter(ctx) {
       // the payload alone is enough to settle or refund
     }
     await jobsRepo.applyEngineState(jobId, { status, revision, audioSeconds });
-    const ok = await charges.resolveJob(jobId, { status, revision }, { maxRevision: revision });
-    await webhooks.onTerminal(jobId, { status, revision }).catch((err) =>
-      log.warn({ event: 'webhook_enqueue_failed', jobId, error: String(err?.message ?? err) }, 'could not record the webhook'));
+    let ok = await charges.resolveJob(jobId, { status, revision }, { maxRevision: revision });
+    // A charge resolved here is no longer seen by the reconciler, so only the engine's retry can record the webhook.
+    try {
+      await webhooks.onTerminal(jobId, { status, revision });
+    } catch (err) {
+      log.warn({ event: 'webhook_enqueue_failed', jobId, error: String(err?.message ?? err) }, 'could not record the webhook');
+      ok = false;
+    }
     res.status(ok ? 200 : 503).json({ ok });
   });
   return router;

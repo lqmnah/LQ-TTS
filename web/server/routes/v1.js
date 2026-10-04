@@ -127,8 +127,16 @@ export function v1Router(ctx) {
   router.delete('/tts/:id', async (req, res) => {
     const job = await ownJob(ctx, req.apiUserId, req.params.id);
     const view = await jobControl.engineView(job.id);
-    if (view && (view.status === 'queued' || view.status === 'running')) await jobControl.cancel(job);
-    else await jobControl.remove(job, view);
+    try {
+      if (view && (view.status === 'queued' || view.status === 'running')) await jobControl.cancel(job);
+      else await jobControl.remove(job, view);
+    } catch (err) {
+      // The web lease error names regeneration, which an API caller never asked for.
+      if (err instanceof ApiError && err.code === 'not_regeneratable') {
+        throw new ApiError('busy', 'another change to this voiceover is still in progress; try again shortly');
+      }
+      throw err;
+    }
     res.status(204).end();
   });
 

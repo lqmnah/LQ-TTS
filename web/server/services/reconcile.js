@@ -51,8 +51,26 @@ export function createReconciler({ pool, engine, charges, jobsRepo, webhooks, lo
           log.warn({ event: 'webhook_enqueue_failed', jobId, error: String(err?.message ?? err) }, 'could not record the webhook'));
       }
     }
+    await prune().catch((err) =>
+      log.warn({ event: 'retention_failed', error: String(err?.message ?? err) }, 'could not prune old API rows'));
     if (checked) log.info({ event: 'reconcile_pass', checked }, 'reconciliation pass');
     return { checked };
+  }
+
+  // Idempotency keys only replay for 24 hours. Finished deliveries go after 30 days, but each key keeps its newest 20,
+  // the ones the API page lists.
+  async function prune() {
+    await pool.query(`DELETE FROM api_idempotency WHERE created_at < now() - interval '24 hours'`);
+    await pool.query(
+      `DELETE FROM webhook_deliveries WHERE id IN (
+         SELECT id FROM (
+           SELECT id, state, created_at,
+                  row_number() OVER (PARTITION BY api_key_id ORDER BY created_at DESC, id DESC) AS rn
+           FROM webhook_deliveries
+           WHERE api_key_id IN (SELECT api_key_id FROM webhook_deliveries
+                                WHERE state IN ('delivered', 'dropped') AND created_at < now() - interval '30 days')) x
+         WHERE rn > 20 AND state IN ('delivered', 'dropped') AND created_at < now() - interval '30 days')`,
+    );
   }
 
   let running = null;

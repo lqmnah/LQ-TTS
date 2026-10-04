@@ -227,6 +227,51 @@ describe('webhooks', () => {
     expect(receiver.hits).toHaveLength(1);
   });
 
+  it('records nothing for a voiceover deleted before the engine callback', async () => {
+    const jobId = await apiJob();
+    h.engine.setJob(jobId, { status: 'done' });
+    expect((await budi.del(`/v1/tts/${jobId}`)).status).toBe(204);
+    expect((await callback({ job_id: jobId, status: 'done', revision: 1 })).status).toBe(200);
+    expect(await delivery(jobId)).toBeUndefined();
+  });
+
+  it('the reconciler prunes idempotency keys after 24 hours and finished deliveries after 30 days, keeping 20 per key', async () => {
+    await h.pool.query(
+      `INSERT INTO api_idempotency (user_id, idem_key, created_at) VALUES
+         ('cici', 'old', now() - interval '25 hours'), ('cici', 'fresh', now() - interval '23 hours')`,
+    );
+    const old = await h.ctx.apiKeys.create('cici', { name: 'old', tv: 0 });
+    const recent = await h.ctx.apiKeys.create('cici', { name: 'recent', tv: 0 });
+    // `old`: 25 finished deliveries 31 to 55 days old and one pending 60 days old; `recent`: 25 finished a day old
+    const { rows } = await h.pool.query(
+      `INSERT INTO webhook_deliveries (api_key_id, user_id, job_id, event, url, body, state, created_at)
+       SELECT $1, 'cici', gen_random_uuid(), 'job.done', 'https://example.com/h', '{}',
+              CASE WHEN i % 2 = 0 THEN 'delivered' ELSE 'dropped' END, now() - make_interval(days => 30 + i)
+       FROM generate_series(1, 25) i RETURNING job_id`,
+      [old.row.id],
+    );
+    await h.pool.query(
+      `INSERT INTO webhook_deliveries (api_key_id, user_id, job_id, event, url, body, state, created_at, next_attempt_at)
+       VALUES ($1, 'cici', gen_random_uuid(), 'job.done', 'https://example.com/h', '{}', 'pending', now() - interval '60 days', now() + interval '1 year')`,
+      [old.row.id],
+    );
+    await h.pool.query(
+      `INSERT INTO webhook_deliveries (api_key_id, user_id, job_id, event, url, body, state, created_at)
+       SELECT $1, 'cici', gen_random_uuid(), 'job.done', 'https://example.com/h', '{}', 'delivered', now() - make_interval(secs => 86400 + i)
+       FROM generate_series(1, 25) i`,
+      [recent.row.id],
+    );
+    await createReconciler(h.ctx).runOnce();
+    const keys = (await h.pool.query(`SELECT idem_key FROM api_idempotency WHERE user_id = 'cici'`)).rows.map((r) => r.idem_key);
+    expect(keys).toEqual(['fresh']);
+    const left = async (keyId) => (await h.pool.query(
+      'SELECT job_id, state FROM webhook_deliveries WHERE api_key_id = $1 ORDER BY created_at DESC', [keyId])).rows;
+    const oldLeft = await left(old.row.id);
+    expect(oldLeft.filter((r) => r.state !== 'pending').map((r) => r.job_id)).toEqual(rows.map((r) => r.job_id).slice(0, 20));
+    expect(oldLeft.filter((r) => r.state === 'pending')).toHaveLength(1);
+    expect(await left(recent.row.id)).toHaveLength(25);
+  });
+
   // `.invalid` never resolves (RFC 6761): reaching the receiver proves the connection used the checked address.
   const pinnedHooks = (looked) => createWebhooks(h.ctx, {
     timeoutMs: 500,

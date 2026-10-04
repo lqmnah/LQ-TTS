@@ -297,4 +297,12 @@ describe('/v1 voiceovers', () => {
     expect((await chargesOf(jobId))[0].state).toBe('settled');
     expect((await budi.get(`/v1/tts/${jobId}`)).status).toBe(404);
   });
+
+  it('answers 409 busy while another cancel or regenerate holds the job', async () => {
+    const { body: { jobId } } = await create({});
+    await h.pool.query(`UPDATE jobs SET regen_lease = gen_random_uuid(), regen_until = now() + interval '60 seconds' WHERE id = $1`, [jobId]);
+    const res = await budi.del(`/v1/tts/${jobId}`);
+    expect([res.status, res.body.error.code]).toEqual([409, 'busy']);
+    expect((await chargesOf(jobId))[0].state).toBe('held');
+  });
 });

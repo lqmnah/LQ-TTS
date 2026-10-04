@@ -18,7 +18,7 @@ export const ENDPOINTS = [
 export const ERRORS = [
   ['invalid_request', '400, 415'], ['invalid_webhook_url', 400], ['unauthorized', 401], ['insufficient_credits', 402],
   ['plan_required', 403], ['suspended', 403], ['needs_verification', 403], ['not_found', 404], ['voice_not_ready', 409],
-  ['idempotency_conflict', 409], ['too_large', 413], ['too_many_jobs', 429], ['rate_limited', 429],
+  ['idempotency_conflict', 409], ['busy', 409], ['too_large', 413], ['too_many_jobs', 429], ['rate_limited', 429],
   ['internal_error', 500], ['lqstudio_unavailable', 503], ['engine_unavailable', 503],
 ];
 

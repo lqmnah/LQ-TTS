@@ -35,7 +35,7 @@ const DYNAMIC_FAMILIES = {
   'api.delivery': ['delivered', 'pending', 'dropped'],
   'docs.endpoint': ['voices', 'estimate', 'create', 'get', 'file', 'delete'],
   'docs.error': ['invalid_request', 'invalid_webhook_url', 'unauthorized', 'insufficient_credits', 'plan_required', 'suspended',
-    'needs_verification', 'not_found', 'voice_not_ready', 'idempotency_conflict', 'too_large', 'too_many_jobs', 'rate_limited',
+    'needs_verification', 'not_found', 'voice_not_ready', 'idempotency_conflict', 'busy', 'too_large', 'too_many_jobs', 'rate_limited',
     'internal_error', 'lqstudio_unavailable', 'engine_unavailable'],
 };
 

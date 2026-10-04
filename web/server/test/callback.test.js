@@ -98,6 +98,23 @@ describe('engine callback', () => {
     expect((await charges(id))[0].state).toBe('settled');
   });
 
+  it('answers 503 when the webhook cannot be recorded, so the engine retries', async () => {
+    const id = await heldJob();
+    h.engine.setJob(id, { status: 'done' });
+    const { onTerminal } = h.ctx.webhooks;
+    h.ctx.webhooks.onTerminal = async () => {
+      throw new Error('db down');
+    };
+    try {
+      expect((await callback({ job_id: id, status: 'done', revision: 1 })).status).toBe(503);
+    } finally {
+      h.ctx.webhooks.onTerminal = onTerminal;
+    }
+    expect(h.logs).toContainEqual(expect.objectContaining({ event: 'webhook_enqueue_failed', jobId: id }));
+    expect((await callback({ job_id: id, status: 'done', revision: 1 })).status).toBe(200);
+    expect((await charges(id))[0].state).toBe('settled');
+  });
+
   it('a late retry for an older revision leaves the newer regeneration alone', async () => {
     const id = await heldJob('Satu. Dua.');
     h.engine.setJob(id, { status: 'done' });
