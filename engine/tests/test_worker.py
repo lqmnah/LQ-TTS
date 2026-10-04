@@ -1,3 +1,4 @@
+import shutil
 import time
 import uuid
 
@@ -7,7 +8,7 @@ import soundfile as sf
 
 from lq_tts_engine.pipeline import Deps, job_dir
 from lq_tts_engine.text.split import split_script
-from lq_tts_engine.worker import handle_job, handle_voice
+from lq_tts_engine.worker import _is_device_error, handle_job, handle_voice
 from tests.fakes import FakeTranscriber, ToneSynth
 from tests.test_voiceprep import steady_words
 
@@ -158,3 +159,38 @@ def test_voice_deleted_during_prep_stays_deleted(repo, tmp_path):
     v = repo.get_voice_any(vid)
     assert v["status"] == "processing" and v["deleted_at"] is not None
     assert not (deps.data_dir / "voices" / str(vid)).exists()
+
+
+
+
+def test_device_error_check_matches_whole_words_only():
+    assert _is_device_error(RuntimeError("MPS backend out of memory"))
+    assert _is_device_error(RuntimeError("Metal command buffer failed"))
+    assert _is_device_error(RuntimeError("Invalid buffer size on mps:0"))
+    assert not _is_device_error(ValueError("word timestamps are not monotonic"))
+    assert not _is_device_error(TypeError("json dumps failed"))
+
+
+def test_error_mentioning_timestamps_fails_the_job_without_exiting(repo, ready_voice, tmp_path):
+    deps, job = make(repo, ready_voice, tmp_path, synth=ToneSynth(fail_with=ValueError("bad timestamps")))
+    handle_job(job, deps, Recorder(), device="mps")
+    j = repo.get_job_any(job["id"])
+    assert (j["status"], j["error_code"]) == ("failed", "internal_error")
+
+
+def test_job_purged_between_finish_and_reread_ends_quietly(repo, ready_voice, tmp_path, monkeypatch):
+    deps, job = make(repo, ready_voice, tmp_path)
+    finish = repo.finish_job
+
+    def finish_then_api_delete(job_id, seconds):
+        finish(job_id, seconds)
+        # DELETE /v1/jobs/{id} sees a finished job and purges it on the spot (folder first, then the row).
+        repo.delete_job("lq-tts", job_id)
+        shutil.rmtree(job_dir(deps.data_dir, job_id), ignore_errors=True)
+        repo.purge_job(job_id)
+
+    monkeypatch.setattr(repo, "finish_job", finish_then_api_delete)
+    rec = Recorder()
+    handle_job(job, deps, rec, device="cpu")
+    assert repo.get_job_any(job["id"]) is None
+    assert rec.sent == []

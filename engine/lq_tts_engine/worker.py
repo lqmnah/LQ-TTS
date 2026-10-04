@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import logging
 import shutil
 import subprocess
@@ -30,9 +31,12 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(payload, ensure_ascii=False, default=str)
 
 
+_DEVICE_ERROR = re.compile(r"\b(?:mps|metal)\b|out of memory")
+
+
 def _is_device_error(exc: BaseException) -> bool:
-    text = f"{type(exc).__name__}: {exc}".lower()
-    return any(marker in text for marker in ("mps", "metal", "out of memory"))
+    """MPS/Metal/OOM failures only; whole words, so "timestamps" or "dumps" never match."""
+    return _DEVICE_ERROR.search(f"{type(exc).__name__}: {exc}".lower()) is not None
 
 
 class LeaseKeeper:
@@ -116,7 +120,10 @@ def handle_job(job: dict, deps: Deps, callbacks: CallbackSender, *, device: str)
     if outcome == "canceled":
         repo.mark_canceled(job["id"])
     fresh = repo.get_job_any(job["id"])
-    if fresh is not None and fresh["deleted_at"] is not None:
+    if fresh is None:  # a DELETE after finish_job saw a finished job and purged it itself
+        log.info("job deleted after it finished; already purged", extra=ctx)
+        return
+    if fresh["deleted_at"] is not None:
         shutil.rmtree(job_dir(deps.data_dir, job["id"]), ignore_errors=True)
         repo.purge_job(job["id"])
         log.info("job deleted while running; purged", extra=ctx)

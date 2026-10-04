@@ -1,6 +1,7 @@
 import json
 import os
 import time
+from pathlib import Path
 
 import httpx
 
@@ -64,3 +65,24 @@ def test_purge_removes_only_old_unreferenced_takes(tmp_path):
 def test_free_gb_is_positive(tmp_path):
     assert free_gb(tmp_path) > 0
 
+
+
+
+def test_purge_skips_takes_deleted_mid_purge(tmp_path, monkeypatch):
+    takes = tmp_path / "jobs" / "j1" / "takes"
+    takes.mkdir(parents=True)
+    gone, kept = takes / "s0000_r1_t1.wav", takes / "s0001_r1_t1.wav"
+    eight_days_ago = time.time() - 8 * 86400
+    for p in (gone, kept):
+        p.write_bytes(b"x")
+        os.utime(p, (eight_days_ago, eight_days_ago))
+    real_stat = Path.stat
+
+    def racing_stat(self, *args, **kwargs):
+        if self == gone and os.path.exists(gone):
+            os.unlink(gone)  # DELETE /v1/jobs removes the folder while the purge runs
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", racing_stat)
+    assert purge_unreferenced_takes(tmp_path, set()) == 1
+    assert not os.path.exists(kept)

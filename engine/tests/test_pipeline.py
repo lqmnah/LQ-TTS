@@ -133,3 +133,12 @@ def test_each_sentence_is_logged(repo, ready_voice, tmp_path, caplog):
     run_job(job, deps, should_stop=never)
     recs = [r for r in caplog.records if r.name == "lq_tts_engine.pipeline" and r.getMessage() == "sentence done"]
     assert [r.ctx["idx"] for r in recs] == [0, 1, 2] and all(r.ctx["status"] == "done" for r in recs)
+
+
+
+
+def test_failed_job_leaves_no_sentence_running(repo, ready_voice, tmp_path):
+    deps, job = setup(repo, ready_voice, tmp_path, synth=ToneSynth(fail_with=ValueError("boom")))
+    with pytest.raises(ValueError):
+        run_job(job, deps, should_stop=never)
+    assert [s["status"] for s in repo.list_sentences(job["id"])] == ["pending"] * len(split_script(TEXT))

@@ -159,7 +159,8 @@ def run_job(job: dict, deps: Deps, *, should_stop: Callable[[], bool]) -> str:
             deps.repo.mark_sentence_running(job["id"], sentence["idx"])
             try:
                 process_sentence(job, sentence, voice, deps, should_stop)
-            except Canceled:
+            except Exception:
+                # Canceled, failed or device error: the in-flight sentence never stays "running".
                 deps.repo.save_sentence(job["id"], sentence["idx"], status="pending", takes=0, score=None,
                                         asr_text=None, audio_path=sentence["audio_path"], duration_s=sentence["duration_s"])
                 raise
