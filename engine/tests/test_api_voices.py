@@ -1,3 +1,4 @@
+import subprocess
 import uuid
 from pathlib import Path
 
@@ -7,7 +8,7 @@ import soundfile as sf
 from fastapi.testclient import TestClient
 
 from lq_tts_engine.api import app as api_module
-from lq_tts_engine.api.app import create_app
+from lq_tts_engine.api.app import caller_for, create_app
 from lq_tts_engine.config import Config
 
 TOKEN, OTHER = "tok-lqtts", "tok-studio"
@@ -100,3 +101,67 @@ def test_health_reports_model_loading_until_worker_beats(client, repo):
     body = client.get("/v1/health").json()
     assert body["model_loaded"] is True and body["device"] == "mps" and body["queue_depth"] == 0
     assert body["rolling_rtf"] == pytest.approx(0.66)
+
+
+def multipart_stream(size: int):
+    yield (b'--b\r\nContent-Disposition: form-data; name="name"\r\n\r\nPandji\r\n'
+           b'--b\r\nContent-Disposition: form-data; name="owner_ref"\r\n\r\nuser-1\r\n'
+           b'--b\r\nContent-Disposition: form-data; name="audio"; filename="vo.wav"\r\nContent-Type: audio/wav\r\n\r\n')
+    for _ in range(size // 1000):
+        yield b"\0" * 1000
+    yield b"\r\n--b--\r\n"
+
+
+def no_voice_folders(cfg) -> bool:
+    folder = cfg.data_dir / "voices"
+    return not folder.exists() or not any(folder.iterdir())
+
+
+def test_streamed_upload_over_the_body_limit_is_refused_before_parsing(client, cfg, monkeypatch):
+    monkeypatch.setattr(api_module, "MAX_UPLOAD_BYTES", 1000)
+    monkeypatch.setattr(api_module, "MULTIPART_OVERHEAD_BYTES", 1000)
+    r = client.post("/v1/voices", headers={**AUTH, "Content-Type": "multipart/form-data; boundary=b"},
+                    content=multipart_stream(50_000))
+    assert r.status_code == 413
+    assert r.json() == {"error": {"code": "too_large", "message": "request body too large"}}
+    assert no_voice_folders(cfg)
+
+
+def test_unknown_route_and_wrong_method_use_the_error_shape(client):
+    r = client.get("/v1/nope", headers=AUTH)
+    assert r.status_code == 404 and r.json() == {"error": {"code": "not_found", "message": "Not Found"}}
+    r = client.put("/v1/health")
+    assert r.status_code == 405
+    assert r.json() == {"error": {"code": "method_not_allowed", "message": "Method Not Allowed"}}
+    assert r.headers["allow"] == "GET"
+
+
+def test_ffprobe_that_hangs_is_unsupported_audio(client, cfg, tmp_path, monkeypatch):
+    seen = {}
+
+    def hanging(cmd, **kwargs):
+        seen["timeout"] = kwargs.get("timeout")
+        raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout"))
+
+    monkeypatch.setattr(api_module.subprocess, "run", hanging)
+    r = upload(client, tmp_path)
+    assert r.status_code == 415 and r.json()["error"]["code"] == "unsupported_audio"
+    assert seen["timeout"] == api_module.FFPROBE_TIMEOUT_S
+    assert no_voice_folders(cfg)
+
+
+def test_failed_voice_insert_leaves_no_folder(cfg, repo, tmp_path, monkeypatch):
+    def broken(*args, **kwargs):
+        raise RuntimeError("database went away")
+
+    monkeypatch.setattr(repo, "create_voice", broken)
+    r = upload(TestClient(create_app(cfg, repo), raise_server_exceptions=False), tmp_path)
+    assert r.status_code == 500
+    assert no_voice_folders(cfg)
+
+
+def test_token_lookup_accepts_only_exact_tokens():
+    tokens = {TOKEN: "lq-tts", OTHER: "lq-studio"}
+    assert caller_for(tokens, TOKEN) == "lq-tts" and caller_for(tokens, OTHER) == "lq-studio"
+    for wrong in (TOKEN[:-1], TOKEN + "x", TOKEN.upper(), "", TOKEN + "\0"):
+        assert caller_for(tokens, wrong) is None

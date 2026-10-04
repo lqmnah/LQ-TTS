@@ -1,5 +1,6 @@
 # No `from __future__ import annotations` here: FastAPI must resolve the local `Caller` alias at runtime.
 import asyncio
+import hmac
 import json
 import shutil
 import subprocess
@@ -12,6 +13,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, ValidationError
 from starlette.concurrency import run_in_threadpool
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from ..config import Config, load_config
 from ..db import make_pool, migrate
@@ -23,10 +25,14 @@ from ..text.split import is_single_sentence, split_script
 
 MAX_TEXT_CHARS = 20_000
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024
+MULTIPART_OVERHEAD_BYTES = 1024 * 1024  # form fields and boundaries around the audio file
+MAX_JSON_BYTES = 256 * 1024  # 20,000 characters of 4-byte UTF-8 plus settings
+FFPROBE_TIMEOUT_S = 30
 CHARS_PER_SECOND = 16.0
 DEFAULT_RTF = 0.82
 HEARTBEAT_STALE_S = 60.0
 UPLOAD_EXTS = {".mp3", ".wav", ".m4a", ".flac"}
+HTTP_CODES = {404: "not_found", 405: "method_not_allowed", 413: "too_large"}
 FILE_TYPES = {"final.mp3": "audio/mpeg", "final.wav": "audio/wav",
               "subs.srt": "application/x-subrip", "subs.vtt": "text/vtt"}
 
@@ -42,12 +48,73 @@ def _error(status: int, code: str, message: str, **extra: Any) -> JSONResponse:
 
 
 def _has_audio_stream(path: Path) -> bool:
-    probe = subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=codec_type",
-         "-of", "csv=p=0", str(path)],
-        capture_output=True, text=True,
-    )
+    try:
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=codec_type",
+             "-of", "csv=p=0", str(path)],
+            capture_output=True, text=True, timeout=FFPROBE_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        return False
     return probe.returncode == 0 and probe.stdout.strip() == "audio"
+
+
+def caller_for(tokens: dict[str, str], token: str) -> str | None:
+    """Compares against every configured token in constant time, so response timing never reveals a near match."""
+    who = None
+    for known, name in tokens.items():
+        if hmac.compare_digest(known.encode(), token.encode()):
+            who = name
+    return who
+
+
+async def _too_large(send) -> None:
+    body = json.dumps({"error": {"code": "too_large", "message": "request body too large"}}).encode()
+    await send({"type": "http.response.start", "status": 413,
+                "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())]})
+    await send({"type": "http.response.body", "body": body})
+
+
+class BodyLimit:
+    """413 too_large for bodies over the route's limit, before parsing; counts chunked (streamed) bodies too."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        limit = MAX_UPLOAD_BYTES + MULTIPART_OVERHEAD_BYTES if scope["path"] == "/v1/voices" else MAX_JSON_BYTES
+        declared = dict(scope["headers"]).get(b"content-length")
+        if declared is not None and declared.isdigit() and int(declared) > limit:
+            await _too_large(send)
+            return
+        seen, over = 0, False
+
+        async def counted():
+            nonlocal seen, over
+            if over:
+                return {"type": "http.disconnect"}
+            message = await receive()
+            if message["type"] == "http.request":
+                seen += len(message.get("body", b""))
+                if seen > limit:
+                    over = True  # the app sees a disconnect and stops reading; its answer is replaced below
+                    return {"type": "http.disconnect"}
+            return message
+
+        async def guarded(message):
+            if not over:
+                await send(message)
+
+        try:
+            await self.app(scope, counted, guarded)
+        except Exception:
+            if not over:
+                raise
+        if over:
+            await _too_large(send)
 
 
 class JobIn(BaseModel):
@@ -77,6 +144,14 @@ def _sse(event: str, data: dict) -> str:
 
 def create_app(cfg: Config, repo: Repo, *, sse_poll_s: float = 1.0) -> FastAPI:
     app = FastAPI(title="LQ-TTS engine", version="1")
+    app.add_middleware(BodyLimit)
+
+    @app.exception_handler(StarletteHTTPException)
+    async def _http(_: Request, exc: StarletteHTTPException) -> JSONResponse:
+        code = HTTP_CODES.get(exc.status_code, "invalid_request" if exc.status_code < 500 else "internal_error")
+        response = _error(exc.status_code, code, str(exc.detail))
+        response.headers.update(exc.headers or {})
+        return response
 
     @app.exception_handler(ApiError)
     async def _api_error(_: Request, exc: ApiError) -> JSONResponse:
@@ -90,7 +165,7 @@ def create_app(cfg: Config, repo: Repo, *, sse_poll_s: float = 1.0) -> FastAPI:
 
     def caller(authorization: Annotated[str | None, Header()] = None) -> str:
         token = (authorization or "").removeprefix("Bearer ").strip()
-        who = cfg.tokens.get(token) if token else None
+        who = caller_for(cfg.tokens, token) if token else None
         if who is None:
             raise ApiError(401, "unauthorized", "missing or invalid service token")
         return who
@@ -118,23 +193,21 @@ def create_app(cfg: Config, repo: Repo, *, sse_poll_s: float = 1.0) -> FastAPI:
         voice_id = uuid.uuid4()
         folder = cfg.data_dir / "voices" / str(voice_id)
         folder.mkdir(parents=True)
-        dest = folder / f"source{ext}"
-        size = 0
-        too_large = False
-        with dest.open("wb") as fh:
-            while chunk := audio.file.read(1024 * 1024):
-                size += len(chunk)
-                if size > MAX_UPLOAD_BYTES:
-                    too_large = True
-                    break
-                fh.write(chunk)
-        if too_large:
-            shutil.rmtree(folder)
-            raise ApiError(413, "too_large", "upload exceeds 200 MB")
-        if not _has_audio_stream(dest):
-            shutil.rmtree(folder)
-            raise ApiError(415, "unsupported_audio", "file has no readable audio")
-        row = repo.create_voice(voice_id, who, owner_ref, name, language, str(dest), transcript)
+        try:
+            dest = folder / f"source{ext}"
+            size = 0
+            with dest.open("wb") as fh:
+                while chunk := audio.file.read(1024 * 1024):
+                    size += len(chunk)
+                    if size > MAX_UPLOAD_BYTES:
+                        raise ApiError(413, "too_large", "upload exceeds 200 MB")
+                    fh.write(chunk)
+            if not _has_audio_stream(dest):
+                raise ApiError(415, "unsupported_audio", "file has no readable audio")
+            row = repo.create_voice(voice_id, who, owner_ref, name, language, str(dest), transcript)
+        except BaseException:
+            shutil.rmtree(folder, ignore_errors=True)  # never leave a folder without a voice row
+            raise
         return {"id": str(row["id"]), "status": row["status"]}
 
     @app.get("/v1/voices")
@@ -214,8 +287,15 @@ def register_job_routes(app: FastAPI, cfg: Config, repo: Repo, *, caller, need_d
             "files": files, "created_at": job["created_at"], "finished_at": job["finished_at"],
         }
 
+    def accepted(job: dict) -> dict:
+        return {"id": str(job["id"]), "sentences_total": len(repo.list_sentences(job["id"])),
+                "estimated_seconds": estimate_seconds(job)}
+
     @app.post("/v1/jobs", status_code=202)
     def create_job(body: JobIn, who: Caller, idempotency_key: Annotated[str | None, Header()] = None) -> dict:
+        key = (idempotency_key or "").strip() or None
+        if key is not None and (replay := repo.find_idempotent_job(who, key)) is not None:
+            return accepted(replay)  # a retried POST gets its job back, whatever disk or voice say now
         need_disk()
         text = body.text.strip()
         if not text:
@@ -234,9 +314,8 @@ def register_job_routes(app: FastAPI, cfg: Config, repo: Repo, *, caller, need_d
         if not units:
             raise ApiError(400, "invalid_text", "no sentences found")
         job, _ = repo.create_job(caller=who, voice_id=body.voice_id, text=text, settings=settings.model_dump(),
-                                 callback_url=body.callback_url, idempotency_key=idempotency_key, units=units)
-        return {"id": str(job["id"]), "sentences_total": len(repo.list_sentences(job["id"])),
-                "estimated_seconds": estimate_seconds(job)}
+                                 callback_url=body.callback_url, idempotency_key=key, units=units)
+        return accepted(job)
 
     @app.get("/v1/jobs/{job_id}")
     def get_job(job_id: uuid.UUID, who: Caller) -> dict:

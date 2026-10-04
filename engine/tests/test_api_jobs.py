@@ -1,9 +1,14 @@
+import json
 import uuid
 
 import pytest
+from fastapi.testclient import TestClient
 
+from lq_tts_engine.api.app import create_app
+from lq_tts_engine.config import Config
 from lq_tts_engine.pipeline import Deps, job_dir, run_job
 from lq_tts_engine.text.split import split_script
+from tests.conftest import sql
 from tests.fakes import FakeTranscriber, ToneSynth
 from tests.test_api_voices import AUTH, OTHER, cfg, client  # noqa: F401  (fixtures)
 
@@ -128,3 +133,29 @@ def test_deleting_voice_removes_its_job_outputs(client, ready_voice, repo, cfg):
     assert client.delete(f"/v1/voices/{ready_voice['id']}", headers=AUTH).status_code == 204
     assert not folder.exists() and repo.get_job_any(uuid.UUID(job_id)) is None
     assert client.get(f"/v1/jobs/{job_id}", headers=AUTH).status_code == 404
+
+
+def test_empty_idempotency_key_is_ignored(client, ready_voice):
+    a = post_job(client, ready_voice, headers={"Idempotency-Key": ""})
+    b = post_job(client, ready_voice, headers={"Idempotency-Key": ""})
+    assert (a.status_code, b.status_code) == (202, 202)
+    assert a.json()["id"] != b.json()["id"]
+
+
+def test_idempotent_replay_wins_over_disk_and_voice_checks(client, cfg, repo, ready_voice):
+    first = post_job(client, ready_voice, headers={"Idempotency-Key": "k-replay"}).json()
+    full = TestClient(create_app(Config(**{**cfg.__dict__, "min_free_gb": 1e12}), repo))
+    r = post_job(full, ready_voice, headers={"Idempotency-Key": "k-replay"})
+    assert r.status_code == 202 and r.json()["id"] == first["id"]
+    sql(repo, "UPDATE voices SET status='processing' WHERE id=%s", (ready_voice["id"],))
+    r = post_job(client, ready_voice, headers={"Idempotency-Key": "k-replay"})
+    assert r.status_code == 202 and r.json()["id"] == first["id"]
+
+
+def test_json_body_over_the_limit_is_refused_streamed_or_not(client, ready_voice):
+    payload = json.dumps({"voice_id": str(ready_voice["id"]), "text": "a" * 300_000}).encode()
+    headers = {**AUTH, "Content-Type": "application/json"}
+    for body in (payload, iter([payload])):  # Content-Length, then chunked
+        r = client.post("/v1/jobs", headers=headers, content=body)
+        assert r.status_code == 413
+        assert r.json() == {"error": {"code": "too_large", "message": "request body too large"}}

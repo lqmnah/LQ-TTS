@@ -118,6 +118,13 @@ class Repo:
                 )
             return job, True
 
+    def find_idempotent_job(self, caller, key: str) -> Row | None:
+        """The job this caller created with this Idempotency-Key in the last 24 hours (create_job's replay window)."""
+        return self._one(
+            "SELECT * FROM jobs WHERE caller=%s AND idempotency_key=%s AND created_at > now() - interval '24 hours'",
+            (caller, key),
+        )
+
     def get_job(self, caller, job_id) -> Row | None:
         return self._one("SELECT * FROM jobs WHERE id=%s AND caller=%s AND deleted_at IS NULL", (job_id, caller))
 
