@@ -171,7 +171,16 @@ test('journey: login with 2FA, VO Profile voiceover, clone, generate, live progr
 
   // 9. History and Credits reflect the job and both charges
   await page.getByRole('link', { name: 'History', exact: true }).click();
-  await expect(page.locator(`[data-testid="history-row"][data-job-id="${jobId}"]`)).toHaveCount(1);
+  const historyRow = page.locator(`[data-testid="history-row"][data-job-id="${jobId}"]`);
+  await expect(historyRow).toHaveCount(1);
+  // 9b. History plays the newest revision in a player under its row
+  await historyRow.getByTestId('history-play').click();
+  const historyAudio = historyRow.locator('[data-testid="history-player"] audio');
+  await expect(historyAudio).toHaveAttribute('src', /\/files\/final\.mp3\?revision=2$/);
+  await expect.poll(() => historyAudio.evaluate((a) => !a.paused && a.currentTime > 0), { timeout: 15_000 }).toBe(true);
+  await expect(historyRow.getByTestId('history-play')).toHaveAttribute('aria-pressed', 'true');
+  await historyRow.getByRole('button', { name: 'Close player', exact: true }).click();
+  await expect(historyRow.getByTestId('history-player')).toHaveCount(0);
   await page.getByRole('link', { name: 'Credits', exact: true }).click();
   await expect(page.locator(`[data-testid="usage-row"][data-job-id="${jobId}"]`)).toHaveCount(2);
 
