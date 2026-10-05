@@ -225,6 +225,10 @@ export default {
   'history.voice_deleted': 'Suara terhapus',
   'history.download_named': 'Unduh {title}',
   'history.delete_named': 'Hapus {title}',
+  'history.play_named': 'Putar {title}',
+  'history.player_named': 'Pemutar {title}',
+  'history.player_close': 'Tutup pemutar',
+  'history.play_failed': 'Audio tidak bisa diputar. Tekan putar untuk mencoba lagi.',
   'history.api_chip': 'API',
 
   'credits.title': 'Kredit',

@@ -1,6 +1,7 @@
-import { ClockCounterClockwiseIcon, DownloadSimpleIcon, TrashIcon } from '@phosphor-icons/react';
+import { CircleNotchIcon, ClockCounterClockwiseIcon, DownloadSimpleIcon, PauseIcon, PlayIcon, TrashIcon, XIcon } from '@phosphor-icons/react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
+import { playButtonClass } from '../components/PlayButton.jsx';
 import { JobStatus } from '../components/status.jsx';
 import { Button, EmptyState, Notice, PageHeader, Skeleton, StatusChip, buttonClass, touchLinkClass } from '../components/ui.jsx';
 import { useI18n } from '../i18n/index.jsx';
@@ -9,6 +10,7 @@ import { triggerDownload } from '../lib/download.js';
 import { errorText } from '../lib/errors.js';
 import { formatDateTime, formatDuration } from '../lib/format.js';
 import { formatNumber } from '../lib/pricing.js';
+import { claimAudio, releaseAudio } from '../lib/useAudioToggle.js';
 
 const PAGE_SIZE = 20;
 const AUDIO_FILES = ['final.mp3', 'final.wav'];
@@ -20,6 +22,11 @@ const revisionOf = (url) => {
   const match = /[?&]revision=(\d+)/.exec(url ?? '');
   return match ? Number(match[1]) : null;
 };
+/** A browser that refuses to start playback (autoplay policy, aborted by a pause) still leaves the controls to press. */
+const startPlayback = (audio) => {
+  claimAudio(audio);
+  Promise.resolve(audio.play()).catch(() => {});
+};
 
 export default function HistoryPage() {
   const { t } = useI18n();
@@ -28,6 +35,8 @@ export default function HistoryPage() {
   const [nextBefore, setNextBefore] = useState(null);
   const [error, setError] = useState(null);
   const [loadingMore, setLoadingMore] = useState(false);
+  // One player at a time: opening a row closes the one before.
+  const [playerId, setPlayerId] = useState(null);
 
   const load = useCallback(async (before = null) => {
     const page = await api.jobs({ limit: PAGE_SIZE, before });
@@ -57,6 +66,7 @@ export default function HistoryPage() {
   }
 
   const remove = (id) => setItems((prev) => prev.filter((j) => j.id !== id));
+  const setPlayer = (id, open) => setPlayerId((cur) => (open ? id : cur === id ? null : cur));
 
   let body;
   if (items === null && !error) {
@@ -89,7 +99,15 @@ export default function HistoryPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">
-                {items.map((j) => <HistoryRow key={j.id} job={j} onDeleted={() => remove(j.id)} />)}
+                {items.map((j) => (
+                  <HistoryRow
+                    key={j.id}
+                    job={j}
+                    onDeleted={() => remove(j.id)}
+                    playerOpen={playerId === j.id}
+                    onPlayer={(open) => setPlayer(j.id, open)}
+                  />
+                ))}
               </tbody>
             </table>
           </div>
@@ -110,22 +128,38 @@ export default function HistoryPage() {
   );
 }
 
-function HistoryRow({ job, onDeleted }) {
+function HistoryRow({ job, onDeleted, playerOpen, onPlayer }) {
   const { t, lang } = useI18n();
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState(null);
+  const [audioSrc, setAudioSrc] = useState(null);
+  const [opening, setOpening] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const [audioFailed, setAudioFailed] = useState(false);
   const triggerRef = useRef(null);
   const confirmRef = useRef(null);
   const wasConfirming = useRef(false);
+  const audioRef = useRef(null);
+  const playRef = useRef(null);
   const promptId = `job-delete-${job.id}`;
+  const playerDomId = `job-player-${job.id}`;
 
   useEffect(() => {
     if (confirming) confirmRef.current?.focus();
     else if (wasConfirming.current) triggerRef.current?.focus();
     wasConfirming.current = confirming;
   }, [confirming]);
+
+  // Opening the player starts it; closing it (or another row opening) leaves this row idle.
+  useEffect(() => {
+    if (!playerOpen) {
+      setPlaying(false);
+      return;
+    }
+    if (audioRef.current) startPlayback(audioRef.current);
+  }, [playerOpen, audioSrc]);
 
   async function remove() {
     setBusy(true);
@@ -139,15 +173,19 @@ function HistoryRow({ job, onDeleted }) {
     }
   }
 
+  /** The newest revision's audio, MP3 first: the server lists only files that exist on disk. */
+  async function audioFile() {
+    const detail = await api.job(job.id);
+    const name = AUDIO_FILES.find((n) => detail.files?.[n]);
+    if (!name) throw { code: 'not_found' };
+    return { name, url: detail.files[name], revision: revisionOf(detail.files[name]) ?? detail.revision };
+  }
+
   async function download() {
     setDownloading(true);
     setError(null);
     try {
-      const detail = await api.job(job.id);
-      const name = AUDIO_FILES.find((n) => detail.files?.[n]);
-      if (!name) throw { code: 'not_found' };
-      const url = detail.files[name];
-      const revision = revisionOf(url) ?? detail.revision;
+      const { name, url, revision } = await audioFile();
       triggerDownload(url, `lq-tts-${job.id.slice(0, 8)}-r${revision}.${name.split('.').pop()}`);
     } catch (err) {
       setError(err);
@@ -156,25 +194,102 @@ function HistoryRow({ job, onDeleted }) {
     }
   }
 
+  async function togglePlay() {
+    setError(null);
+    setAudioFailed(false);
+    const audio = audioRef.current;
+    if (playerOpen && audio) {
+      if (playing) audio.pause();
+      else startPlayback(audio);
+      return;
+    }
+    setOpening(true);
+    try {
+      const { url } = await audioFile();
+      setAudioSrc(url);
+      onPlayer(true);
+    } catch (err) {
+      setError(err);
+    } finally {
+      setOpening(false);
+    }
+  }
+
+  function closePlayer() {
+    onPlayer(false);
+    playRef.current?.focus();
+  }
+
   const confirmId = `job-delete-confirm-${job.id}`;
   return (
     <tr data-testid="history-row" data-job-id={job.id} className="align-top">
       <td className="px-4 py-3">
-        <Link to={`/jobs/${job.id}`} className={`font-medium text-ink transition-colors duration-150 [overflow-wrap:anywhere] hover:text-accent ${touchLinkClass}`}>{job.title}</Link>
-        {job.source === 'api' ? <span className="ml-2 inline-flex align-middle"><StatusChip testId="api-chip">{t('history.api_chip')}</StatusChip></span> : null}
-        <p className="mt-0.5 text-xs text-muted">{job.voiceName ?? t('history.voice_deleted')} · {formatDateTime(job.createdAt, lang)}</p>
-        <div className="mt-1 md:hidden"><JobStatus status={job.status} /></div>
-        {error ? <p className="mt-1 text-xs text-danger" role="alert">{errorText(t, error)}</p> : null}
-        {/* The confirm lives in the widest cell, never the narrow actions cell, so it wraps instead of overlapping. */}
-        {confirming ? (
-          <div id={confirmId} data-testid="history-confirm" className="mt-3 flex flex-col gap-3 rounded-control bg-danger-soft p-3 lg:flex-row lg:items-center lg:justify-between">
-            <p id={promptId} role="alert" className="text-sm text-ink">{t('job.delete_confirm')}</p>
-            <div className="flex flex-wrap gap-2 lg:shrink-0">
-              <Button ref={confirmRef} variant="danger" size="sm" loading={busy} aria-describedby={promptId} onClick={remove}>{t('job.delete')}</Button>
-              <Button variant="ghost" size="sm" disabled={busy} onClick={() => setConfirming(false)}>{t('common.cancel')}</Button>
-            </div>
+        <div className="flex items-start gap-3">
+          <button
+            ref={playRef}
+            type="button"
+            onClick={togglePlay}
+            disabled={!hasAudio(job) || opening}
+            aria-busy={opening || undefined}
+            aria-pressed={playing}
+            aria-controls={playerOpen && audioSrc ? playerDomId : undefined}
+            aria-label={t('history.play_named', { title: job.title })}
+            data-testid="history-play"
+            className={playButtonClass({ playing, error: audioFailed })}
+          >
+            {opening ? (
+              <CircleNotchIcon size={18} className="animate-spin" aria-hidden />
+            ) : playing ? (
+              <PauseIcon size={18} weight="fill" aria-hidden />
+            ) : (
+              <PlayIcon size={18} weight="fill" aria-hidden />
+            )}
+          </button>
+          <div className="min-w-0 flex-1">
+            <Link to={`/jobs/${job.id}`} className={`font-medium text-ink transition-colors duration-150 [overflow-wrap:anywhere] hover:text-accent ${touchLinkClass}`}>{job.title}</Link>
+            {job.source === 'api' ? <span className="ml-2 inline-flex align-middle"><StatusChip testId="api-chip">{t('history.api_chip')}</StatusChip></span> : null}
+            <p className="mt-0.5 text-xs text-muted">{job.voiceName ?? t('history.voice_deleted')} · {formatDateTime(job.createdAt, lang)}</p>
+            <div className="mt-1 md:hidden"><JobStatus status={job.status} /></div>
+            {error ? <p className="mt-1 text-xs text-danger" role="alert">{errorText(t, error)}</p> : null}
+            {audioFailed ? <p className="mt-1 text-xs text-danger" role="alert">{t('history.play_failed')}</p> : null}
+            {playerOpen && audioSrc ? (
+              <div id={playerDomId} data-testid="history-player" className="mt-3 flex items-center gap-2 rounded-control border border-line bg-surface-2 p-2">
+                <audio
+                  ref={audioRef}
+                  controls
+                  preload="metadata"
+                  src={audioSrc}
+                  aria-label={t('history.player_named', { title: job.title })}
+                  onPlay={(e) => {
+                    claimAudio(e.currentTarget);
+                    setPlaying(true);
+                  }}
+                  onPause={(e) => {
+                    releaseAudio(e.currentTarget);
+                    setPlaying(false);
+                  }}
+                  onEnded={() => setPlaying(false)}
+                  onError={() => {
+                    setPlaying(false);
+                    setAudioFailed(true);
+                  }}
+                  className="h-10 min-w-0 flex-1"
+                />
+                <Button variant="ghost" size="sm" icon={XIcon} onClick={closePlayer} aria-label={t('history.player_close')} />
+              </div>
+            ) : null}
+            {/* The confirm lives in the widest cell, never the narrow actions cell, so it wraps instead of overlapping. */}
+            {confirming ? (
+              <div id={confirmId} data-testid="history-confirm" className="mt-3 flex flex-col gap-3 rounded-control bg-danger-soft p-3 lg:flex-row lg:items-center lg:justify-between">
+                <p id={promptId} role="alert" className="text-sm text-ink">{t('job.delete_confirm')}</p>
+                <div className="flex flex-wrap gap-2 lg:shrink-0">
+                  <Button ref={confirmRef} variant="danger" size="sm" loading={busy} aria-describedby={promptId} onClick={remove}>{t('job.delete')}</Button>
+                  <Button variant="ghost" size="sm" disabled={busy} onClick={() => setConfirming(false)}>{t('common.cancel')}</Button>
+                </div>
+              </div>
+            ) : null}
           </div>
-        ) : null}
+        </div>
       </td>
       <td className="hidden whitespace-nowrap px-4 py-3 md:table-cell"><JobStatus status={job.status} /></td>
       <td className="hidden whitespace-nowrap px-4 py-3 text-right font-mono tabular lg:table-cell">{formatNumber(job.chars, lang)}</td>

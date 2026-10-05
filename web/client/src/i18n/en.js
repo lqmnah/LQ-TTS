@@ -225,6 +225,10 @@ export default {
   'history.voice_deleted': 'Deleted voice',
   'history.download_named': 'Download {title}',
   'history.delete_named': 'Delete {title}',
+  'history.play_named': 'Play {title}',
+  'history.player_named': 'Player for {title}',
+  'history.player_close': 'Close player',
+  'history.play_failed': 'The audio could not play. Press play to try again.',
   'history.api_chip': 'API',
 
   'credits.title': 'Credits',
