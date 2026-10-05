@@ -70,6 +70,28 @@ for (const vp of VIEWPORTS) {
         expect(m.bottomNav?.height).toBe(64);
       }
       await shot(page, vp, name);
+      if (name === 'history') {
+        // The player opens under the row and must fit every width.
+        const historyRow = page.locator(`[data-testid="history-row"][data-job-id="${jobId}"]`);
+        await historyRow.getByTestId('history-play').click();
+        const player = page.locator(`[data-testid="history-player"][data-job-id="${jobId}"]`);
+        await expect(player).toBeVisible();
+        await expect.poll(() => player.locator('audio').evaluate((a) => a.readyState >= 1)).toBe(true);
+        await assertLayout(page, vp, { touch: vp.touch });
+        // A native <audio> is ~300px wide at minimum: inside the table it must not stretch the row past the card,
+        // whose overflow-hidden would clip the player and the row actions without any page-level overflow.
+        const inView = async (loc) => {
+          const box = await loc.boundingBox();
+          return box.x >= 0 && box.x + box.width <= vp.width;
+        };
+        expect(await inView(player), `history player fits ${vp.width}px`).toBe(true);
+        // Native controls drop play and time below ~250px: the player row must stay wide enough to use on phones.
+        expect((await player.locator('audio').boundingBox()).width, `history player usable at ${vp.width}px`).toBeGreaterThanOrEqual(250);
+        expect(await inView(historyRow.getByRole('button', { name: /^Hapus /, exact: false })), `row actions fit ${vp.width}px`).toBe(true);
+        await shot(page, vp, 'history-player');
+        await player.getByRole('button', { name: 'Tutup pemutar', exact: true }).click();
+        await expect(player).toHaveCount(0);
+      }
     }
 
     if (vp.width === 1440) {

@@ -1,5 +1,5 @@
 import { CircleNotchIcon, ClockCounterClockwiseIcon, DownloadSimpleIcon, PauseIcon, PlayIcon, TrashIcon, XIcon } from '@phosphor-icons/react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { playButtonClass } from '../components/PlayButton.jsx';
 import { JobStatus } from '../components/status.jsx';
@@ -13,6 +13,8 @@ import { formatNumber } from '../lib/pricing.js';
 import { claimAudio, releaseAudio } from '../lib/useAudioToggle.js';
 
 const PAGE_SIZE = 20;
+/** Columns in the History table: the player row spans all of them. */
+const COLUMNS = 6;
 const AUDIO_FILES = ['final.mp3', 'final.wav'];
 
 /** Done jobs, and failed/canceled regenerates whose earlier revision is still on disk, have audio. */
@@ -236,87 +238,95 @@ function HistoryRow({ job, onDeleted, playerOpen, requestPlayer, onOpenPlayer, o
 
   const confirmId = `job-delete-confirm-${job.id}`;
   return (
-    <tr data-testid="history-row" data-job-id={job.id} className="align-top">
-      <td className="px-4 py-3">
-        <div className="flex items-start gap-3">
-          <button
-            ref={playRef}
-            type="button"
-            onClick={togglePlay}
-            disabled={!hasAudio(job) || opening}
-            aria-busy={opening || undefined}
-            aria-pressed={playing}
-            aria-controls={playerOpen && audioSrc ? playerDomId : undefined}
-            aria-label={t('history.play_named', { title: job.title })}
-            data-testid="history-play"
-            className={playButtonClass({ playing, error: audioFailed })}
-          >
-            {opening ? (
-              <CircleNotchIcon size={18} className="animate-spin" aria-hidden />
-            ) : playing ? (
-              <PauseIcon size={18} weight="fill" aria-hidden />
-            ) : (
-              <PlayIcon size={18} weight="fill" aria-hidden />
-            )}
-          </button>
-          <div className="min-w-0 flex-1">
-            <Link to={`/jobs/${job.id}`} className={`font-medium text-ink transition-colors duration-150 [overflow-wrap:anywhere] hover:text-accent ${touchLinkClass}`}>{job.title}</Link>
-            {job.source === 'api' ? <span className="ml-2 inline-flex align-middle"><StatusChip testId="api-chip">{t('history.api_chip')}</StatusChip></span> : null}
-            <p className="mt-0.5 text-xs text-muted">{job.voiceName ?? t('history.voice_deleted')} · {formatDateTime(job.createdAt, lang)}</p>
-            <div className="mt-1 md:hidden"><JobStatus status={job.status} /></div>
-            {error ? <p className="mt-1 text-xs text-danger" role="alert">{errorText(t, error)}</p> : null}
-            {audioFailed ? <p className="mt-1 text-xs text-danger" role="alert">{t('history.play_failed')}</p> : null}
-            {playerOpen && audioSrc ? (
-              <div id={playerDomId} data-testid="history-player" className="mt-3 flex items-center gap-2 rounded-control border border-line bg-surface-2 p-2">
-                <audio
-                  ref={audioRef}
-                  controls
-                  preload="metadata"
-                  src={audioSrc}
-                  aria-label={t('history.player_named', { title: job.title })}
-                  onPlay={(e) => {
-                    claimAudio(e.currentTarget);
-                    setPlaying(true);
-                  }}
-                  onPause={(e) => {
-                    releaseAudio(e.currentTarget);
-                    setPlaying(false);
-                  }}
-                  onEnded={() => setPlaying(false)}
-                  onError={() => {
-                    setPlaying(false);
-                    setAudioFailed(true);
-                  }}
-                  className="h-10 min-w-0 flex-1"
-                />
-                <Button variant="ghost" size="sm" icon={XIcon} onClick={closePlayer} aria-label={t('history.player_close')} />
-              </div>
-            ) : null}
-            {/* The confirm lives in the widest cell, never the narrow actions cell, so it wraps instead of overlapping. */}
-            {confirming ? (
-              <div id={confirmId} data-testid="history-confirm" className="mt-3 flex flex-col gap-3 rounded-control bg-danger-soft p-3 lg:flex-row lg:items-center lg:justify-between">
-                <p id={promptId} role="alert" className="text-sm text-ink">{t('job.delete_confirm')}</p>
-                <div className="flex flex-wrap gap-2 lg:shrink-0">
-                  <Button ref={confirmRef} variant="danger" size="sm" loading={busy} aria-describedby={promptId} onClick={remove}>{t('job.delete')}</Button>
-                  <Button variant="ghost" size="sm" disabled={busy} onClick={() => setConfirming(false)}>{t('common.cancel')}</Button>
+    <Fragment>
+      {/* With the player open, the divider moves below the player row so the pair reads as one item. */}
+      <tr data-testid="history-row" data-job-id={job.id} className={`align-top ${playerOpen && audioSrc ? 'border-b-0' : ''}`}>
+        <td className="px-4 py-3">
+          <div className="flex items-start gap-3">
+            <button
+              ref={playRef}
+              type="button"
+              onClick={togglePlay}
+              disabled={!hasAudio(job) || opening}
+              aria-busy={opening || undefined}
+              aria-pressed={playing}
+              aria-controls={playerOpen && audioSrc ? playerDomId : undefined}
+              aria-label={t('history.play_named', { title: job.title })}
+              data-testid="history-play"
+              className={playButtonClass({ playing, error: audioFailed })}
+            >
+              {opening ? (
+                <CircleNotchIcon size={18} className="animate-spin" aria-hidden />
+              ) : playing ? (
+                <PauseIcon size={18} weight="fill" aria-hidden />
+              ) : (
+                <PlayIcon size={18} weight="fill" aria-hidden />
+              )}
+            </button>
+            <div className="min-w-0 flex-1">
+              <Link to={`/jobs/${job.id}`} className={`font-medium text-ink transition-colors duration-150 [overflow-wrap:anywhere] hover:text-accent ${touchLinkClass}`}>{job.title}</Link>
+              {job.source === 'api' ? <span className="ml-2 inline-flex align-middle"><StatusChip testId="api-chip">{t('history.api_chip')}</StatusChip></span> : null}
+              <p className="mt-0.5 text-xs text-muted">{job.voiceName ?? t('history.voice_deleted')} · {formatDateTime(job.createdAt, lang)}</p>
+              <div className="mt-1 md:hidden"><JobStatus status={job.status} /></div>
+              {error ? <p className="mt-1 text-xs text-danger" role="alert">{errorText(t, error)}</p> : null}
+              {audioFailed ? <p className="mt-1 text-xs text-danger" role="alert">{t('history.play_failed')}</p> : null}
+              {/* The confirm lives in the widest cell, never the narrow actions cell, so it wraps instead of overlapping. */}
+              {confirming ? (
+                <div id={confirmId} data-testid="history-confirm" className="mt-3 flex flex-col gap-3 rounded-control bg-danger-soft p-3 lg:flex-row lg:items-center lg:justify-between">
+                  <p id={promptId} role="alert" className="text-sm text-ink">{t('job.delete_confirm')}</p>
+                  <div className="flex flex-wrap gap-2 lg:shrink-0">
+                    <Button ref={confirmRef} variant="danger" size="sm" loading={busy} aria-describedby={promptId} onClick={remove}>{t('job.delete')}</Button>
+                    <Button variant="ghost" size="sm" disabled={busy} onClick={() => setConfirming(false)}>{t('common.cancel')}</Button>
+                  </div>
                 </div>
-              </div>
-            ) : null}
+              ) : null}
+            </div>
           </div>
-        </div>
-      </td>
-      <td className="hidden whitespace-nowrap px-4 py-3 md:table-cell"><JobStatus status={job.status} /></td>
-      <td className="hidden whitespace-nowrap px-4 py-3 text-right font-mono tabular lg:table-cell">{formatNumber(job.chars, lang)}</td>
-      <td className="hidden whitespace-nowrap px-4 py-3 text-right font-mono tabular lg:table-cell">{formatNumber(job.credits, lang)}</td>
-      <td className="hidden whitespace-nowrap px-4 py-3 text-right font-mono tabular md:table-cell">{formatDuration(job.audioSeconds)}</td>
-      <td className="px-4 py-3">
-        <div className="flex justify-end gap-1">
-          <Button variant="ghost" size="sm" icon={DownloadSimpleIcon} disabled={!hasAudio(job) || confirming} loading={downloading} onClick={download} aria-label={t('history.download_named', { title: job.title })}>
-            <span className="hidden lg:inline">{t('common.download')}</span>
-          </Button>
-          <Button ref={triggerRef} variant="ghost" size="sm" icon={TrashIcon} aria-expanded={confirming} aria-controls={confirming ? confirmId : undefined} onClick={() => setConfirming(true)} aria-label={t('history.delete_named', { title: job.title })} />
-        </div>
-      </td>
-    </tr>
+        </td>
+        <td className="hidden whitespace-nowrap px-4 py-3 md:table-cell"><JobStatus status={job.status} /></td>
+        <td className="hidden whitespace-nowrap px-4 py-3 text-right font-mono tabular lg:table-cell">{formatNumber(job.chars, lang)}</td>
+        <td className="hidden whitespace-nowrap px-4 py-3 text-right font-mono tabular lg:table-cell">{formatNumber(job.credits, lang)}</td>
+        <td className="hidden whitespace-nowrap px-4 py-3 text-right font-mono tabular md:table-cell">{formatDuration(job.audioSeconds)}</td>
+        <td className="px-4 py-3">
+          <div className="flex justify-end gap-1">
+            <Button variant="ghost" size="sm" icon={DownloadSimpleIcon} disabled={!hasAudio(job) || confirming} loading={downloading} onClick={download} aria-label={t('history.download_named', { title: job.title })}>
+              <span className="hidden lg:inline">{t('common.download')}</span>
+            </Button>
+            <Button ref={triggerRef} variant="ghost" size="sm" icon={TrashIcon} aria-expanded={confirming} aria-controls={confirming ? confirmId : undefined} onClick={() => setConfirming(true)} aria-label={t('history.delete_named', { title: job.title })} />
+          </div>
+        </td>
+      </tr>
+      {playerOpen && audioSrc ? (
+        // Its own full-width row under the voiceover: the title cell is too narrow on phones for native controls.
+        <tr>
+          <td colSpan={COLUMNS} className="px-4 pb-3 pt-0">
+            <div id={playerDomId} data-testid="history-player" data-job-id={job.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-control border border-line bg-surface-2 p-2">
+              <audio
+                ref={audioRef}
+                controls
+                preload="metadata"
+                src={audioSrc}
+                aria-label={t('history.player_named', { title: job.title })}
+                onPlay={(e) => {
+                  claimAudio(e.currentTarget);
+                  setPlaying(true);
+                }}
+                onPause={(e) => {
+                  releaseAudio(e.currentTarget);
+                  setPlaying(false);
+                }}
+                onEnded={() => setPlaying(false)}
+                onError={() => {
+                  setPlaying(false);
+                  setAudioFailed(true);
+                }}
+                className="w-full"
+              />
+              <Button variant="ghost" size="sm" icon={XIcon} onClick={closePlayer} aria-label={t('history.player_close')} />
+            </div>
+          </td>
+        </tr>
+      ) : null}
+    </Fragment>
   );
 }

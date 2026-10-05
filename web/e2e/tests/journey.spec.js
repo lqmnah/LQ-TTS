@@ -175,12 +175,14 @@ test('journey: login with 2FA, VO Profile voiceover, clone, generate, live progr
   await expect(historyRow).toHaveCount(1);
   // 9b. History plays the newest revision in a player under its row
   await historyRow.getByTestId('history-play').click();
-  const historyAudio = historyRow.locator('[data-testid="history-player"] audio');
+  // The player is its own row under the voiceover's row.
+  const historyPlayer = page.locator(`[data-testid="history-player"][data-job-id="${jobId}"]`);
+  const historyAudio = historyPlayer.locator('audio');
   await expect(historyAudio).toHaveAttribute('src', /\/files\/final\.mp3\?revision=2$/);
   await expect.poll(() => historyAudio.evaluate((a) => !a.paused && a.currentTime > 0), { timeout: 15_000 }).toBe(true);
   await expect(historyRow.getByTestId('history-play')).toHaveAttribute('aria-pressed', 'true');
-  await historyRow.getByRole('button', { name: 'Close player', exact: true }).click();
-  await expect(historyRow.getByTestId('history-player')).toHaveCount(0);
+  await historyPlayer.getByRole('button', { name: 'Close player', exact: true }).click();
+  await expect(historyPlayer).toHaveCount(0);
   await page.getByRole('link', { name: 'Credits', exact: true }).click();
   await expect(page.locator(`[data-testid="usage-row"][data-job-id="${jobId}"]`)).toHaveCount(2);
 

@@ -145,6 +145,8 @@ describe('HistoryPage player', () => {
     'final.wav': `/api/jobs/${id}/files/final.wav?revision=2`,
     'final.mp3': `/api/jobs/${id}/files/final.mp3?revision=2`,
   });
+  // The player sits in its own full-width row right under the voiceover it plays.
+  const playerOf = (row) => row.nextElementSibling?.querySelector('[data-testid="history-player"]') ?? null;
 
   beforeEach(() => {
     // jsdom has no media pipeline: play/pause only fire their events.
@@ -159,7 +161,7 @@ describe('HistoryPage player', () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
-  it('plays the newest MP3 in a player under the row and toggles pause', async () => {
+  it('plays the newest MP3 in a full-width player under the row and toggles pause', async () => {
     api.jobs.mockResolvedValue({ items: [summary('a')], nextBefore: null });
     const user = userEvent.setup();
     renderRoutes(routes, { path: '/history' });
@@ -168,8 +170,10 @@ describe('HistoryPage player', () => {
     expect(play).toHaveAttribute('aria-pressed', 'false');
     await user.click(play);
     expect(api.job).toHaveBeenCalledWith('a');
-    const player = await within(row).findByTestId('history-player');
-    expect(row.querySelectorAll('td')[0]).toContainElement(player);
+    const player = await screen.findByTestId('history-player');
+    expect(playerOf(row)).toBe(player);
+    expect(player.closest('td')).toHaveAttribute('colspan', '6');
+    expect(play).toHaveAttribute('aria-controls', player.id);
     const audio = player.querySelector('audio');
     expect(audio).toHaveAttribute('src', '/api/jobs/a/files/final.mp3?revision=2');
     expect(audio).toHaveAttribute('controls');
@@ -178,7 +182,7 @@ describe('HistoryPage player', () => {
     await user.click(play);
     expect(HTMLMediaElement.prototype.pause).toHaveBeenCalled();
     expect(play).toHaveAttribute('aria-pressed', 'false');
-    expect(within(row).getByTestId('history-player')).toBeInTheDocument();
+    expect(playerOf(row)).toBeInTheDocument();
     expect(api.job).toHaveBeenCalledTimes(1);
   });
 
@@ -188,10 +192,11 @@ describe('HistoryPage player', () => {
     renderRoutes(routes, { path: '/history' });
     const [rowA, rowB] = await screen.findAllByTestId('history-row');
     await user.click(within(rowA).getByRole('button', { name: 'Putar Naskah a' }));
-    await within(rowA).findByTestId('history-player');
+    await waitFor(() => expect(playerOf(rowA)).toBeInTheDocument());
     await user.click(within(rowB).getByRole('button', { name: 'Putar Naskah b' }));
-    await within(rowB).findByTestId('history-player');
+    await waitFor(() => expect(playerOf(rowB)).toBeInTheDocument());
     expect(screen.getAllByTestId('history-player')).toHaveLength(1);
+    expect(playerOf(rowA)).toBeNull();
     expect(within(rowA).getByRole('button', { name: 'Putar Naskah a' })).toHaveAttribute('aria-pressed', 'false');
   });
 
@@ -201,9 +206,9 @@ describe('HistoryPage player', () => {
     renderRoutes(routes, { path: '/history' });
     const row = await screen.findByTestId('history-row');
     await user.click(within(row).getByRole('button', { name: 'Putar Naskah a' }));
-    const player = await within(row).findByTestId('history-player');
+    const player = await screen.findByTestId('history-player');
     await user.click(within(player).getByRole('button', { name: 'Tutup pemutar' }));
-    expect(within(row).queryByTestId('history-player')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('history-player')).not.toBeInTheDocument();
     expect(within(row).getByRole('button', { name: 'Putar Naskah a' })).toHaveFocus();
   });
 
@@ -215,10 +220,10 @@ describe('HistoryPage player', () => {
     const [rowA, rowB] = await screen.findAllByTestId('history-row');
     await user.click(within(rowA).getByRole('button', { name: 'Putar Naskah a' }));
     expect(await within(rowA).findByRole('alert')).toBeInTheDocument();
-    expect(within(rowA).queryByTestId('history-player')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('history-player')).not.toBeInTheDocument();
     await user.click(within(rowB).getByRole('button', { name: 'Putar Naskah b' }));
-    const audio = (await within(rowB).findByTestId('history-player')).querySelector('audio');
-    audio.dispatchEvent(new Event('error'));
+    await waitFor(() => expect(playerOf(rowB)).toBeInTheDocument());
+    playerOf(rowB).querySelector('audio').dispatchEvent(new Event('error'));
     expect(await within(rowB).findByRole('alert')).toHaveTextContent('Audio tidak bisa diputar');
   });
 
@@ -234,11 +239,11 @@ describe('HistoryPage player', () => {
     await user.click(within(rowA).getByRole('button', { name: 'Putar Naskah a' }));
     await user.click(within(rowB).getByRole('button', { name: 'Putar Naskah b' }));
     pending.b();
-    await within(rowB).findByTestId('history-player');
+    await waitFor(() => expect(playerOf(rowB)).toBeInTheDocument());
     pending.a();
     await waitFor(() => expect(within(rowA).getByRole('button', { name: 'Putar Naskah a' })).toBeEnabled());
     expect(screen.getAllByTestId('history-player')).toHaveLength(1);
-    expect(within(rowB).getByTestId('history-player')).toBeInTheDocument();
+    expect(playerOf(rowB)).toBeInTheDocument();
   });
 
   it('reloads the source when play is pressed again after a playback error', async () => {
@@ -249,7 +254,7 @@ describe('HistoryPage player', () => {
     const row = await screen.findByTestId('history-row');
     const play = within(row).getByRole('button', { name: 'Putar Naskah a' });
     await user.click(play);
-    const audio = (await within(row).findByTestId('history-player')).querySelector('audio');
+    const audio = (await screen.findByTestId('history-player')).querySelector('audio');
     audio.dispatchEvent(new Event('error'));
     await within(row).findByRole('alert');
     await user.click(play);
