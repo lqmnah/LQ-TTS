@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderRoutes } from '../test/render.jsx';
@@ -220,5 +220,42 @@ describe('HistoryPage player', () => {
     const audio = (await within(rowB).findByTestId('history-player')).querySelector('audio');
     audio.dispatchEvent(new Event('error'));
     expect(await within(rowB).findByRole('alert')).toHaveTextContent('Audio tidak bisa diputar');
+  });
+
+  it('lets the row clicked last win when an earlier row loads slower', async () => {
+    api.jobs.mockResolvedValue({ items: [summary('a'), summary('b')], nextBefore: null });
+    const pending = {};
+    api.job.mockImplementation((id) => new Promise((resolve) => {
+      pending[id] = () => resolve({ ...summary(id, { revision: 2 }), files: files(id) });
+    }));
+    const user = userEvent.setup();
+    renderRoutes(routes, { path: '/history' });
+    const [rowA, rowB] = await screen.findAllByTestId('history-row');
+    await user.click(within(rowA).getByRole('button', { name: 'Putar Naskah a' }));
+    await user.click(within(rowB).getByRole('button', { name: 'Putar Naskah b' }));
+    pending.b();
+    await within(rowB).findByTestId('history-player');
+    pending.a();
+    await waitFor(() => expect(within(rowA).getByRole('button', { name: 'Putar Naskah a' })).toBeEnabled());
+    expect(screen.getAllByTestId('history-player')).toHaveLength(1);
+    expect(within(rowB).getByTestId('history-player')).toBeInTheDocument();
+  });
+
+  it('reloads the source when play is pressed again after a playback error', async () => {
+    vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => {});
+    api.jobs.mockResolvedValue({ items: [summary('a')], nextBefore: null });
+    const user = userEvent.setup();
+    renderRoutes(routes, { path: '/history' });
+    const row = await screen.findByTestId('history-row');
+    const play = within(row).getByRole('button', { name: 'Putar Naskah a' });
+    await user.click(play);
+    const audio = (await within(row).findByTestId('history-player')).querySelector('audio');
+    audio.dispatchEvent(new Event('error'));
+    await within(row).findByRole('alert');
+    await user.click(play);
+    expect(HTMLMediaElement.prototype.load).toHaveBeenCalledTimes(1);
+    expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(2);
+    expect(within(row).queryByRole('alert')).not.toBeInTheDocument();
+    expect(play).toHaveAttribute('aria-pressed', 'true');
   });
 });

@@ -35,8 +35,10 @@ export default function HistoryPage() {
   const [nextBefore, setNextBefore] = useState(null);
   const [error, setError] = useState(null);
   const [loadingMore, setLoadingMore] = useState(false);
-  // One player at a time: opening a row closes the one before.
+  // One player at a time: opening a row closes the one before. Only the newest play request may open one,
+  // so a slower earlier click never takes the player from the row clicked last.
   const [playerId, setPlayerId] = useState(null);
+  const playerRequest = useRef(0);
 
   const load = useCallback(async (before = null) => {
     const page = await api.jobs({ limit: PAGE_SIZE, before });
@@ -66,7 +68,11 @@ export default function HistoryPage() {
   }
 
   const remove = (id) => setItems((prev) => prev.filter((j) => j.id !== id));
-  const setPlayer = (id, open) => setPlayerId((cur) => (open ? id : cur === id ? null : cur));
+  const requestPlayer = () => ++playerRequest.current;
+  const openPlayer = (id, request) => {
+    if (request === playerRequest.current) setPlayerId(id);
+  };
+  const closePlayer = (id) => setPlayerId((cur) => (cur === id ? null : cur));
 
   let body;
   if (items === null && !error) {
@@ -105,7 +111,9 @@ export default function HistoryPage() {
                     job={j}
                     onDeleted={() => remove(j.id)}
                     playerOpen={playerId === j.id}
-                    onPlayer={(open) => setPlayer(j.id, open)}
+                    requestPlayer={requestPlayer}
+                    onOpenPlayer={(request) => openPlayer(j.id, request)}
+                    onClosePlayer={() => closePlayer(j.id)}
                   />
                 ))}
               </tbody>
@@ -128,7 +136,7 @@ export default function HistoryPage() {
   );
 }
 
-function HistoryRow({ job, onDeleted, playerOpen, onPlayer }) {
+function HistoryRow({ job, onDeleted, playerOpen, requestPlayer, onOpenPlayer, onClosePlayer }) {
   const { t, lang } = useI18n();
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -199,15 +207,21 @@ function HistoryRow({ job, onDeleted, playerOpen, onPlayer }) {
     setAudioFailed(false);
     const audio = audioRef.current;
     if (playerOpen && audio) {
-      if (playing) audio.pause();
-      else startPlayback(audio);
+      if (playing) {
+        audio.pause();
+        return;
+      }
+      // An element that failed to load never refetches on play(); load() starts it afresh.
+      if (audioFailed) audio.load();
+      startPlayback(audio);
       return;
     }
+    const request = requestPlayer();
     setOpening(true);
     try {
       const { url } = await audioFile();
       setAudioSrc(url);
-      onPlayer(true);
+      onOpenPlayer(request);
     } catch (err) {
       setError(err);
     } finally {
@@ -216,7 +230,7 @@ function HistoryRow({ job, onDeleted, playerOpen, onPlayer }) {
   }
 
   function closePlayer() {
-    onPlayer(false);
+    onClosePlayer();
     playRef.current?.focus();
   }
 
