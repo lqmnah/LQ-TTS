@@ -92,6 +92,12 @@ class Repo:
             (code, voice_id),
         ) is not None
 
+    def set_voice_adapter(self, voice_id, adapter_path: str) -> bool:
+        return self._one(
+            "UPDATE voices SET adapter_path=%s WHERE id=%s AND status='ready' AND deleted_at IS NULL RETURNING id",
+            (adapter_path, voice_id),
+        ) is not None
+
     # ---- jobs ---------------------------------------------------------------
     def create_job(self, *, caller, voice_id, text, settings: dict, callback_url, idempotency_key,
                    units: Sequence[Unit], priority: int = DEFAULT_PRIORITY) -> tuple[Row, bool]:
