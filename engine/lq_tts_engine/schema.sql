@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS voices (
   deleted_at timestamptz
 );
 CREATE INDEX IF NOT EXISTS voices_owner ON voices (caller, owner_ref) WHERE deleted_at IS NULL;
+ALTER TABLE voices ADD COLUMN IF NOT EXISTS adapter_path text;  -- LoRA adapter dir (lora_voice.py); NULL = base model
 
 CREATE TABLE IF NOT EXISTS jobs (
   id uuid PRIMARY KEY,
