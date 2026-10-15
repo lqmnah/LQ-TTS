@@ -50,7 +50,7 @@ class AdapterSwitch:
                 self._reset()
                 raise AdapterLoadFailed(f"{adapter_path}: {type(exc).__name__}: {exc}") from exc
             if skipped or not loaded:
-                # voxcpm skips tensors that do not fit instead of raising; a partial adapter must never be used.
+                # voxcpm skips tensors whose names the model lacks instead of raising; never use a partial adapter.
                 self._reset()
                 raise AdapterLoadFailed(f"{adapter_path}: {len(loaded)} tensors loaded, {len(skipped)} do not fit")
             self.active = adapter_path
