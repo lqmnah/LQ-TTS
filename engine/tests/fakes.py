@@ -17,12 +17,10 @@ class ToneSynth:
 
     def __init__(self, silent_takes: int = 0, fail_with: Exception | None = None):
         self.calls: list[tuple[str, str | None]] = []
-        self.voices: list = []
         self.silent_takes = silent_takes
         self.fail_with = fail_with
 
     def generate(self, text, voice, style):
-        self.voices.append(voice)
         self.calls.append((text, style))
         if self.fail_with is not None:
             raise self.fail_with

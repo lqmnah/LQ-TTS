@@ -19,9 +19,6 @@ CREATE TABLE IF NOT EXISTS voices (
   created_at timestamptz NOT NULL DEFAULT now(),
   deleted_at timestamptz
 );
--- First statement on an existing voices table: its ACCESS EXCLUSIVE lock comes before the index's SHARE lock, so the API
--- and the worker migrating at once queue up instead of deadlocking on a SHARE -> EXCLUSIVE upgrade.
-ALTER TABLE voices ADD COLUMN IF NOT EXISTS adapter_path text;  -- LoRA adapter dir (lora_voice.py); NULL = base model
 CREATE INDEX IF NOT EXISTS voices_owner ON voices (caller, owner_ref) WHERE deleted_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS jobs (

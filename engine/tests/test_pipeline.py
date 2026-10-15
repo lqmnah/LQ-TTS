@@ -4,7 +4,6 @@ import soundfile as sf
 from lq_tts_engine.audio.finish import measure_lufs
 from lq_tts_engine.pipeline import Deps, latest_revision, revision_dir, run_job
 from lq_tts_engine.text.split import split_script
-from tests.conftest import sql
 from tests.fakes import FakeTranscriber, ToneSynth
 
 TEXT = "Kalimat pertama di sini. Kalimat kedua di sini.\n\nParagraf baru mulai sekarang."
@@ -143,10 +142,3 @@ def test_failed_job_leaves_no_sentence_running(repo, ready_voice, tmp_path):
     with pytest.raises(ValueError):
         run_job(job, deps, should_stop=never)
     assert [s["status"] for s in repo.list_sentences(job["id"])] == ["pending"] * len(split_script(TEXT))
-
-
-def test_voice_adapter_reaches_the_synthesizer(repo, ready_voice, tmp_path):
-    sql(repo, "UPDATE voices SET adapter_path='/adapters/abysa' WHERE id=%s", (ready_voice["id"],))
-    deps, job = setup(repo, ready_voice, tmp_path)
-    assert run_job(job, deps, should_stop=never) == "done"
-    assert {v.adapter_path for v in deps.synth.voices} == {"/adapters/abysa"}

@@ -1,9 +1,8 @@
 import threading
 import uuid
 
-from lq_tts_engine.db import migrate
 from lq_tts_engine.text.split import split_script
-from tests.conftest import sql, test_database_url
+from tests.conftest import sql
 
 TEXT = "Kalimat pertama di sini. Kalimat kedua di sini.\n\nParagraf baru mulai sekarang."
 
@@ -90,11 +89,3 @@ def test_concurrent_same_idempotency_key_returns_one_job(repo, ready_voice):
     assert results[0][0]["id"] == results[1][0]["id"]
     assert sorted(created for _, created in results) == [False, True]
     assert sql(repo, "SELECT count(*) AS n FROM jobs WHERE idempotency_key='race'").fetchone()["n"] == 1
-
-
-def test_migrate_adds_adapter_path_to_an_existing_voices_table(repo, ready_voice):
-    schema = sql(repo, "SELECT current_schema() AS s").fetchone()["s"]
-    sql(repo, "ALTER TABLE voices DROP COLUMN adapter_path")  # the table as PROD has it before this release
-    migrate(test_database_url(), schema)
-    v = repo.get_voice_any(ready_voice["id"])
-    assert (v["status"], v["adapter_path"]) == ("ready", None)

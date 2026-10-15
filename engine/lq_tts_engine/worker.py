@@ -16,7 +16,6 @@ from .db import make_pool, migrate
 from .pipeline import Deps, SynthesisFailed, job_dir, run_job
 from .repo import Repo
 from .retention import purge_unreferenced_takes
-from .synth import AdapterLoadFailed
 from .voiceprep import NoCleanSpeech, prepare_voice
 
 LEASE_S, RENEW_S, PURGE_EVERY_S, IDLE_SLEEP_S = 60, 15, 3600, 1.0
@@ -38,12 +37,6 @@ _DEVICE_ERROR = re.compile(r"\b(?:mps|metal)\b|out of memory")
 def _is_device_error(exc: BaseException) -> bool:
     """MPS/Metal/OOM failures only; whole words, so "timestamps" or "dumps" never match."""
     return _DEVICE_ERROR.search(f"{type(exc).__name__}: {exc}".lower()) is not None
-
-
-def _failure_code(exc: BaseException) -> str:
-    if isinstance(exc, AdapterLoadFailed):
-        return "adapter_load_failed"  # this voice only: the model is back on base weights for every other voice
-    return "synthesis_failed" if isinstance(exc, SynthesisFailed) else "internal_error"
 
 
 class LeaseKeeper:
@@ -118,11 +111,11 @@ def handle_job(job: dict, deps: Deps, callbacks: CallbackSender, *, device: str)
         with LeaseKeeper(deps, job["id"], device):
             outcome = run_job(job, deps, should_stop=lambda: repo.cancel_requested(job["id"]))
     except Exception as exc:  # noqa: BLE001 - classify and record every failure
-        if _is_device_error(exc) and not isinstance(exc, AdapterLoadFailed):
+        if _is_device_error(exc):
             log.exception("device error; exiting so pm2 restarts the worker", extra=ctx)
             sys.exit(3)
         log.exception("job failed", extra=ctx)
-        repo.fail_job(job["id"], _failure_code(exc))
+        repo.fail_job(job["id"], "synthesis_failed" if isinstance(exc, SynthesisFailed) else "internal_error")
         outcome = "failed"
     if outcome == "canceled":
         repo.mark_canceled(job["id"])

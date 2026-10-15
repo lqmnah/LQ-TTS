@@ -65,7 +65,7 @@ class Deps:
 
 def process_sentence(job: dict, sentence: dict, voice: dict, deps: Deps, should_stop: Callable[[], bool]) -> None:
     settings = JobSettings(**job["settings"])
-    ref = VoiceRef(voice["ref_audio_path"], voice["ref_transcript"], voice["adapter_path"])
+    ref = VoiceRef(voice["ref_audio_path"], voice["ref_transcript"])
     language = guess_language(sentence["text"]) or voice.get("language")
     takes_dir = job_dir(deps.data_dir, job["id"]) / "takes"
     takes_dir.mkdir(parents=True, exist_ok=True)
