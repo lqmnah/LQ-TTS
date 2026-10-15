@@ -52,13 +52,13 @@ def test_real_voice_pipeline_meets_quality_bar(repo, models, tmp_path):
 LORA = os.environ.get("LQTTS_SLOW_LORA")  # a VoxCPM LoRA checkpoint dir trained with config.LORA_SHAPE
 
 
-def lora_scalings(synth) -> set[float]:
-    """The scaling every LoRA layer of the real model applies right now (alpha/r when enabled, 0 when disabled)."""
-    return {float(m.scaling) for m in synth.model.tts_model.modules() if hasattr(m, "set_enabled")}
+def lora_scalings(model) -> set[float]:
+    """The scaling every LoRA layer of a loaded VoxCPM2 applies right now; empty when it has no LoRA layers."""
+    return {float(m.scaling) for m in model.tts_model.modules() if hasattr(m, "set_enabled")}
 
 
 @pytest.mark.skipif(not LORA, reason="set LQTTS_SLOW_LORA to a LoRA checkpoint dir")
-def test_adapter_voice_and_base_voice_share_one_model(repo, models, tmp_path):
+def test_adapter_voices_run_on_the_lora_instance_and_base_voices_on_the_plain_model(repo, models, tmp_path):
     import uuid
 
     import torch
@@ -82,9 +82,10 @@ def test_adapter_voice_and_base_voice_share_one_model(repo, models, tmp_path):
         assert run_job(job, deps, should_stop=lambda: False) == "done"
         sentences = repo.list_sentences(job["id"])
         assert all(s["score"] >= 0.85 for s in sentences), [(s["text"], s["asr_text"], s["score"]) for s in sentences]
-        assert synth.adapters.active == LORA  # a base-voice job only disables the adapter; it stays loaded
-        assert lora_scalings(synth) == ({LORA_SHAPE["alpha"] / LORA_SHAPE["r"]} if adapter else {0.0})
+        assert synth.adapters.active == LORA  # a base-voice job leaves the LoRA instance and its adapter alone
+        assert lora_scalings(synth.adapters.model) == {LORA_SHAPE["alpha"] / LORA_SHAPE["r"]}
+        assert lora_scalings(synth.model) == set()  # base voices run on a model without LoRA layers
     want = load_file(str(Path(LORA) / "lora_weights.safetensors"))
-    got = synth.model.get_lora_state_dict()
+    got = synth.adapters.model.get_lora_state_dict()
     assert set(got) == set(want)  # the adapter covers every LoRA layer: none keeps another adapter's values
     assert all(torch.equal(got[k], want[k].to(got[k].device, got[k].dtype)) for k in want)

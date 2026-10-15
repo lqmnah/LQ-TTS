@@ -1,6 +1,9 @@
+from types import SimpleNamespace
+
+import numpy as np
 import pytest
 
-from lq_tts_engine.synth import AdapterLoadFailed, AdapterSwitch
+from lq_tts_engine.synth import AdapterLoadFailed, AdapterSwitch, VoiceRef, VoxSynth
 
 MODULES = {"lm.q", "lm.v", "dit.q", "dit.v"}  # LoRA tensors the fake model has
 
@@ -34,19 +37,52 @@ class FakeLoraModel:
         self.enabled = enabled
 
 
-def test_voice_without_adapter_runs_on_the_base_model():
-    model = FakeLoraModel()
-    AdapterSwitch(model).use(None)
-    assert model.enabled is False
+class FakeVox(FakeLoraModel):
+    """A loaded VoxCPM2 instance: counts generate() calls."""
+
+    tts_model = SimpleNamespace(sample_rate=48000)
+
+    def __init__(self):
+        super().__init__()
+        self.generated = 0
+
+    def generate(self, **kw):
+        self.generated += 1
+        return np.zeros(480, dtype=np.float32)
 
 
-def test_adapter_stays_loaded_across_its_jobs_and_base_jobs_in_between():
+def synth_with_fake_loader():
+    built = []
+
+    def load(device, lora):
+        built.append(lora)
+        return FakeVox()
+
+    return VoxSynth("cpu", load=load), built
+
+
+def test_voices_without_adapter_never_build_the_lora_instance():
+    synth, built = synth_with_fake_loader()
+    synth.generate("halo", VoiceRef("/ref.wav", "halo"), None)
+    assert built == [False] and synth.model.generated == 1
+
+
+def test_adapter_voices_share_one_lora_instance_and_base_voices_keep_the_plain_model():
+    synth, built = synth_with_fake_loader()
+    with_adapter, plain = VoiceRef("/ref.wav", "halo", "/a"), VoiceRef("/ref.wav", "halo")
+    for voice in (with_adapter, plain, with_adapter):
+        synth.generate("halo", voice, None)
+    assert built == [False, True]  # the LoRA instance is built once, on the first adapter job
+    assert synth.model.generated == 1  # the base voice ran on the plain model: no LoRA cost for it
+    assert (synth.adapters.model.generated, synth.adapters.model.loads) == (2, ["/a"])
+
+
+def test_adapter_stays_loaded_across_its_jobs():
     model = FakeLoraModel()
     sw = AdapterSwitch(model)
-    for path, enabled in (("/a", True), ("/a", True), (None, False), ("/a", True)):
-        sw.use(path)
-        assert model.enabled is enabled
-    assert model.loads == ["/a"]
+    for _ in range(3):
+        sw.use("/a")
+    assert model.loads == ["/a"] and model.enabled is True
 
 
 def test_switching_to_an_adapter_with_fewer_tensors_keeps_none_of_the_old_ones():
@@ -58,7 +94,7 @@ def test_switching_to_an_adapter_with_fewer_tensors_keeps_none_of_the_old_ones()
     assert model.enabled is True and sw.active == "/b"
 
 
-def test_failed_load_resets_to_base_and_is_retried_next_time():
+def test_failed_load_resets_the_tensors_and_is_retried_next_time():
     model = FakeLoraModel(bad={"/a"})
     sw = AdapterSwitch(model)
     with pytest.raises(AdapterLoadFailed, match="/a"):
