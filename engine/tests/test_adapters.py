@@ -77,6 +77,23 @@ def test_adapter_voices_share_one_lora_instance_and_base_voices_keep_the_plain_m
     assert (synth.adapters.model.generated, synth.adapters.model.loads) == (2, ["/a"])
 
 
+def test_lora_instance_that_fails_to_build_is_retried_on_the_next_adapter_job():
+    built = []
+
+    def load(device, lora):
+        built.append(lora)
+        if lora and built.count(True) == 1:
+            raise RuntimeError("build failed")
+        return FakeVox()
+
+    synth = VoxSynth("cpu", load=load)
+    voice = VoiceRef("/ref.wav", "halo", "/a")
+    with pytest.raises(RuntimeError, match="build failed"):
+        synth.prepare(voice)
+    synth.generate("halo", voice, None)
+    assert built == [False, True, True] and synth.adapters.model.generated == 1
+
+
 def test_adapter_stays_loaded_across_its_jobs():
     model = FakeLoraModel()
     sw = AdapterSwitch(model)

@@ -18,6 +18,9 @@ class VoiceRef:
 class Synthesizer(Protocol):
     sample_rate: int
 
+    def prepare(self, voice: VoiceRef) -> None:
+        """Set the model up for this voice (lazy LoRA build, adapter load) before any take is timed."""
+
     def generate(self, text: str, voice: VoiceRef, style: str | None) -> np.ndarray: ...
 
 
@@ -60,7 +63,8 @@ def load_voxcpm(device: str, lora: bool):
     from voxcpm import VoxCPM
     from voxcpm.model.voxcpm2 import LoRAConfig
 
-    extra = {"lora_config": LoRAConfig(**LORA_SHAPE, dropout=0.0)} if lora else {}
+    # The LoRA instance is built mid-job from the snapshot the plain model was loaded from: no download, same weights.
+    extra = {"lora_config": LoRAConfig(**LORA_SHAPE, dropout=0.0), "local_files_only": True} if lora else {}
     return VoxCPM.from_pretrained("openbmb/VoxCPM2", load_denoiser=False, device=device, **extra)
 
 
@@ -84,6 +88,9 @@ class VoxSynth:
             self.adapters = AdapterSwitch(self._load(True))
         self.adapters.use(voice.adapter_path)
         return self.adapters.model
+
+    def prepare(self, voice: VoiceRef) -> None:
+        self._model_for(voice)
 
     def generate(self, text: str, voice: VoiceRef, style: str | None) -> np.ndarray:
         model = self._model_for(voice)

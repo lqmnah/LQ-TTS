@@ -43,7 +43,7 @@ def _pairs(raw: str, name: str) -> dict[str, str]:
 DEFAULT_PRIORITY = 5  # the web level; a job created without "priority" gets it, so older callers keep their place
 DEFAULT_PRIORITY_RANGE = (1, 5)  # what any caller may ask for unless LQTTS_PRIORITY_RANGES says otherwise
 MAX_CALLER_PRIORITY = 9  # 10 is the regenerate lane (Repo.request_regenerate); no caller may create jobs there
-# The single LoRA shape of every voice adapter: VoxSynth builds the model with it once, and lora_voice refuses an
+# The single LoRA shape of every voice adapter: VoxSynth builds its LoRA instance with it, and lora_voice refuses an
 # adapter trained with any other shape (voxcpm skips tensors whose names the model lacks, and an adapter with fewer
 # target modules would cover only part of the model).
 LORA_SHAPE = {

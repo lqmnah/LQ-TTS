@@ -1,3 +1,5 @@
+import time
+
 import pytest
 import soundfile as sf
 
@@ -150,3 +152,27 @@ def test_voice_adapter_reaches_the_synthesizer(repo, ready_voice, tmp_path):
     deps, job = setup(repo, ready_voice, tmp_path)
     assert run_job(job, deps, should_stop=never) == "done"
     assert {v.adapter_path for v in deps.synth.voices} == {"/adapters/abysa"}
+
+
+class LazySetupSynth(ToneSynth):
+    """Like VoxSynth: setting up the model for a voice (lazy LoRA build, adapter load) takes 0.3 s and happens in
+    prepare(), or inside the first generate() when nobody prepared it."""
+
+    def __init__(self):
+        super().__init__()
+        self.ready = False
+
+    def prepare(self, voice):
+        if not self.ready:
+            time.sleep(0.3)
+            self.ready = True
+
+    def generate(self, text, voice, style):
+        self.prepare(voice)
+        return super().generate(text, voice, style)
+
+
+def test_model_setup_stays_out_of_the_rtf_window(repo, ready_voice, tmp_path):
+    deps, job = setup(repo, ready_voice, tmp_path, synth=LazySetupSynth())
+    assert run_job(job, deps, should_stop=never) == "done"
+    assert max(deps.rtf_window) < 0.1  # 0.3 s of set-up inside a ~1.4 s take would read as rtf >= 0.2

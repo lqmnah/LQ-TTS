@@ -21,6 +21,9 @@ class ToneSynth:
         self.silent_takes = silent_takes
         self.fail_with = fail_with
 
+    def prepare(self, voice):
+        pass
+
     def generate(self, text, voice, style):
         self.voices.append(voice)
         self.calls.append((text, style))

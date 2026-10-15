@@ -63,9 +63,13 @@ class Deps:
         return sum(self.rtf_window) / len(self.rtf_window) if self.rtf_window else None
 
 
+def voice_ref(voice: dict) -> VoiceRef:
+    return VoiceRef(voice["ref_audio_path"], voice["ref_transcript"], voice["adapter_path"])
+
+
 def process_sentence(job: dict, sentence: dict, voice: dict, deps: Deps, should_stop: Callable[[], bool]) -> None:
     settings = JobSettings(**job["settings"])
-    ref = VoiceRef(voice["ref_audio_path"], voice["ref_transcript"], voice["adapter_path"])
+    ref = voice_ref(voice)
     language = guess_language(sentence["text"]) or voice.get("language")
     takes_dir = job_dir(deps.data_dir, job["id"]) / "takes"
     takes_dir.mkdir(parents=True, exist_ok=True)
@@ -149,6 +153,7 @@ def run_job(job: dict, deps: Deps, *, should_stop: Callable[[], bool]) -> str:
     if voice is None or voice["status"] != "ready" or voice["deleted_at"] is not None:
         deps.repo.fail_job(job["id"], "voice_not_ready")
         return "failed"
+    deps.synth.prepare(voice_ref(voice))  # model set-up stays out of the per-take rtf timing
     try:
         while True:
             if should_stop():
