@@ -7,6 +7,7 @@ import pytest
 import soundfile as sf
 
 from lq_tts_engine.pipeline import Deps, job_dir
+from lq_tts_engine.synth import AdapterLoadFailed
 from lq_tts_engine.text.split import split_script
 from lq_tts_engine.worker import _is_device_error, handle_job, handle_voice
 from tests.fakes import FakeTranscriber, ToneSynth
@@ -194,3 +195,11 @@ def test_job_purged_between_finish_and_reread_ends_quietly(repo, ready_voice, tm
     handle_job(job, deps, rec, device="cpu")
     assert repo.get_job_any(job["id"]) is None
     assert rec.sent == []
+
+
+def test_adapter_load_failure_fails_the_job_even_when_the_message_mentions_mps(repo, ready_voice, tmp_path):
+    err = AdapterLoadFailed("/v/lora-x: RuntimeError: MPS backend out of memory")
+    deps, job = make(repo, ready_voice, tmp_path, synth=ToneSynth(fail_with=err))
+    handle_job(job, deps, Recorder(), device="mps")  # no SystemExit: a restart would only requeue the same failure
+    j = repo.get_job_any(job["id"])
+    assert (j["status"], j["error_code"]) == ("failed", "adapter_load_failed")
