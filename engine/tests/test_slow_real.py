@@ -46,3 +46,31 @@ def test_real_voice_pipeline_meets_quality_bar(repo, models, tmp_path):
     out = revision_dir(deps.data_dir, job["id"], 1)
     assert abs(measure_lufs(out / "final.wav") + 14.0) <= 1.0
     assert (out / "subs.srt").read_text().count(" --> ") == len(sentences)
+
+
+LORA = os.environ.get("LQTTS_SLOW_LORA")  # a VoxCPM LoRA checkpoint dir trained with config.LORA_SHAPE
+
+
+@pytest.mark.skipif(not LORA, reason="set LQTTS_SLOW_LORA to a LoRA checkpoint dir")
+def test_adapter_voice_and_base_voice_share_one_model(repo, models, tmp_path):
+    import uuid
+
+    synth, asr = models
+    ref = FIX / "ref.wav"
+    ref_seconds = sf.info(str(ref)).duration
+    deps = Deps(repo=repo, synth=synth, asr=asr, data_dir=tmp_path / "data")
+    text = "Jawaban singkatnya: ya. Dan putusan pengadilan menegaskannya dua kali."
+    for adapter in (LORA, None, LORA):
+        vid = uuid.uuid4()
+        repo.create_voice(vid, "lq-tts", "slow", FIX.name, "id", str(ref), None)
+        repo.voice_ready(vid, ref_audio_path=str(ref), ref_transcript=(FIX / "ref.txt").read_text().strip(),
+                         ref_seconds=ref_seconds, clip_start_s=0.0, clip_end_s=ref_seconds, language="id")
+        if adapter:
+            assert repo.set_voice_adapter(vid, adapter)
+        repo.create_job(caller="lq-tts", voice_id=vid, text=text, settings={}, callback_url=None,
+                        idempotency_key=None, units=split_script(text))
+        job = repo.claim_job()
+        assert run_job(job, deps, should_stop=lambda: False) == "done"
+        sentences = repo.list_sentences(job["id"])
+        assert all(s["score"] >= 0.85 for s in sentences), [(s["text"], s["asr_text"], s["score"]) for s in sentences]
+        assert synth.adapters.active == LORA  # a base-voice job only disables the adapter; it stays loaded
