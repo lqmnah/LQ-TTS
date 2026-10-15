@@ -26,8 +26,9 @@ class AdapterLoadFailed(Exception):
 
 
 class AdapterSwitch:
-    """Holds at most one LoRA adapter in the model. A voice's adapter is loaded only when it is not the active one; a voice
-    without an adapter runs on the base model (LoRA scaling 0) and leaves the active adapter loaded for the next job."""
+    """Holds at most one LoRA adapter in the model. A voice's adapter is loaded only when it is not the active one;
+    a voice without an adapter runs on the base model (LoRA scaling 0) and leaves the active adapter loaded for the
+    next job."""
 
     def __init__(self, model):
         self.model = model
@@ -40,6 +41,9 @@ class AdapterSwitch:
             return
         if adapter_path != self.active:
             self.active = None
+            # load_lora copies only the tensors the checkpoint has: without a reset, any tensor the new adapter lacks
+            # would keep the previous adapter's values.
+            self.model.unload_lora()
             try:
                 loaded, skipped = self.model.load_lora(adapter_path)
             except Exception as exc:  # noqa: BLE001 - a failed load may leave half-copied weights behind

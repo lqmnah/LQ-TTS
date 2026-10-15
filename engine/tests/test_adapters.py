@@ -2,82 +2,86 @@ import pytest
 
 from lq_tts_engine.synth import AdapterLoadFailed, AdapterSwitch
 
+MODULES = {"lm.q", "lm.v", "dit.q", "dit.v"}  # LoRA tensors the fake model has
+
 
 class FakeLoraModel:
-    """Records what AdapterSwitch does to the model. Paths in `bad` raise on load; paths in `partial` come back with
-    skipped tensors, the way voxcpm reports an adapter whose keys do not fit instead of raising."""
+    """Holds LoRA tensors the way voxcpm does: load_lora copies only the tensors a checkpoint has (skipping names the
+    model lacks instead of raising), unload_lora resets every tensor, set_lora_enabled toggles their scaling.
+    `adapters` maps a path to its tensors; paths in `bad` raise on load."""
 
-    def __init__(self, bad=(), partial=()):
-        self.calls = []
-        self.bad, self.partial = set(bad), set(partial)
+    def __init__(self, adapters=None, bad=()):
+        self.adapters = adapters or {}
+        self.bad = set(bad)
+        self.tensors: dict[str, str] = {}  # module -> name of the adapter whose values it holds; absent = reset
+        self.enabled = None
+        self.loads: list[str] = []
 
     def load_lora(self, path):
-        self.calls.append(("load", path))
+        self.loads.append(path)
         if path in self.bad:
             raise FileNotFoundError(path)
-        return (["a"], ["b"]) if path in self.partial else (["a", "b"], [])
+        names = self.adapters.get(path, MODULES)
+        loaded = [n for n in names if n in MODULES]
+        for n in loaded:
+            self.tensors[n] = path
+        return loaded, [n for n in names if n not in MODULES]
 
     def unload_lora(self):
-        self.calls.append(("unload",))
+        self.tensors = {}
 
     def set_lora_enabled(self, enabled):
-        self.calls.append(("enabled", enabled))
-
-
-def switch(**kw):
-    model = FakeLoraModel(**kw)
-    sw = AdapterSwitch(model)
-    model.calls.clear()
-    return sw, model
-
-
-def loads(model):
-    return [c[1] for c in model.calls if c[0] == "load"]
+        self.enabled = enabled
 
 
 def test_voice_without_adapter_runs_on_the_base_model():
-    sw, model = switch()
-    sw.use(None)
-    assert model.calls == [("enabled", False)]
+    model = FakeLoraModel()
+    AdapterSwitch(model).use(None)
+    assert model.enabled is False
 
 
 def test_adapter_stays_loaded_across_its_jobs_and_base_jobs_in_between():
-    sw, model = switch()
-    for path in ("/a", "/a", None, "/a"):
+    model = FakeLoraModel()
+    sw = AdapterSwitch(model)
+    for path, enabled in (("/a", True), ("/a", True), (None, False), ("/a", True)):
         sw.use(path)
-    assert loads(model) == ["/a"]
-    assert [c[1] for c in model.calls if c[0] == "enabled"] == [True, True, False, True]
+        assert model.enabled is enabled
+    assert model.loads == ["/a"]
 
 
-def test_another_adapter_replaces_the_active_one():
-    sw, model = switch()
+def test_switching_to_an_adapter_with_fewer_tensors_keeps_none_of_the_old_ones():
+    model = FakeLoraModel(adapters={"/b": {"lm.q", "lm.v"}})
+    sw = AdapterSwitch(model)
     sw.use("/a")
     sw.use("/b")
-    assert loads(model) == ["/a", "/b"] and sw.active == "/b"
+    assert model.tensors == {"lm.q": "/b", "lm.v": "/b"}  # the DiT tensors must not keep /a's values
+    assert model.enabled is True and sw.active == "/b"
 
 
 def test_failed_load_resets_to_base_and_is_retried_next_time():
-    sw, model = switch(bad={"/a"})
+    model = FakeLoraModel(bad={"/a"})
+    sw = AdapterSwitch(model)
     with pytest.raises(AdapterLoadFailed, match="/a"):
         sw.use("/a")
-    assert model.calls == [("load", "/a"), ("unload",), ("enabled", False)]
+    assert (model.tensors, model.enabled) == ({}, False)
     model.bad.clear()
     sw.use("/a")
-    assert model.calls[-2:] == [("load", "/a"), ("enabled", True)]
+    assert model.loads == ["/a", "/a"] and model.enabled is True
 
 
 def test_adapter_whose_tensors_do_not_fit_is_never_enabled():
-    sw, model = switch(partial={"/a"})
+    model = FakeLoraModel(adapters={"/a": {"lm.q", "lm.k"}})
+    sw = AdapterSwitch(model)
     with pytest.raises(AdapterLoadFailed, match="1 do not fit"):
         sw.use("/a")
-    assert ("enabled", True) not in model.calls
-    assert model.calls[-2:] == [("unload",), ("enabled", False)]
+    assert (model.tensors, model.enabled) == ({}, False)
 
 
 def test_failure_while_switching_away_forgets_the_old_adapter():
-    sw, model = switch(bad={"/b"})
+    model = FakeLoraModel(bad={"/b"})
+    sw = AdapterSwitch(model)
     sw.use("/a")
     with pytest.raises(AdapterLoadFailed):
         sw.use("/b")
-    sw.use("/a")  # /b's failed load reset the weights, so /a must be loaded again, not trusted from the cache
-    assert loads(model) == ["/a", "/b", "/a"]
+    sw.use("/a")  # /b's failed load reset the tensors, so /a must be loaded again, not trusted from the cache
+    assert model.loads == ["/a", "/b", "/a"] and model.tensors == dict.fromkeys(MODULES, "/a")

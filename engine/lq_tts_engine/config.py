@@ -44,8 +44,13 @@ DEFAULT_PRIORITY = 5  # the web level; a job created without "priority" gets it,
 DEFAULT_PRIORITY_RANGE = (1, 5)  # what any caller may ask for unless LQTTS_PRIORITY_RANGES says otherwise
 MAX_CALLER_PRIORITY = 9  # 10 is the regenerate lane (Repo.request_regenerate); no caller may create jobs there
 # The single LoRA shape of every voice adapter: VoxSynth builds the model with it once, and lora_voice refuses an
-# adapter trained with any other shape (its tensors would not fit and voxcpm would skip them silently).
-LORA_SHAPE = {"enable_lm": True, "enable_dit": True, "enable_proj": False, "r": 32, "alpha": 32}
+# adapter trained with any other shape (its tensors would not fit and voxcpm would skip them silently, or cover only
+# part of the model).
+LORA_SHAPE = {
+    "enable_lm": True, "enable_dit": True, "enable_proj": False, "r": 32, "alpha": 32,
+    "target_modules_lm": ["q_proj", "v_proj", "k_proj", "o_proj"],
+    "target_modules_dit": ["q_proj", "v_proj", "k_proj", "o_proj"],
+}
 
 
 def _priority_range(caller: str, raw: str) -> tuple[int, int]:
