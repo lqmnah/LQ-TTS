@@ -95,3 +95,48 @@ def test_thousand_separators_collapse(text, expected):
 def test_regression_whisper_thousand_separators_pass():
     assert score("Cuma dua puluh lima ribu.", "Cuma 25.000.") >= PASS_SCORE
     assert score("Gajinya satu juta lima ratus ribu.", "Gajinya 1.500.000.") >= PASS_SCORE
+
+
+# 2026-10-16: LQ Journal and LQ-Studio send acronyms spelled out ("ka te pe" for KTP) while Whisper writes them as letters.
+# Every take of such a sentence failed QA, so the engine spent 4 takes and kept the one whose transcript looked most like
+# the spelling — a mispronounced take ("Kata Ted, P"). Transcripts below are from those PROD jobs.
+SPELLED = "ka te pe-nya dipakai tanpa izin, lalu kasus itu diperiksa o je ka dan Ka Pe Ka."
+RIGHT = "KTP -nya dipakai tanpa izin, lalu kasus itu diperiksa OJK dan KPK."
+
+
+def test_acronym_heard_as_letters_matches_its_spelling():
+    assert score(SPELLED, RIGHT) >= PASS_SCORE
+
+
+@pytest.mark.parametrize("heard", [
+    "Kata Ted, P -nya dipakai tanpa izin. Lalu kasus itu diperiksa OJK dan KPK.",
+    "Buka TP -nya dipakai tanpa izin, lalu kasus itu diperiksa OJK dan KPK.",
+    "KATP -nya dipakai tanpa izin, lalu kasus itu diperiksa OJK dan KPK.",
+])
+def test_mispronounced_acronym_fails_and_ranks_below_the_right_take(heard):
+    assert score(SPELLED, heard) < PASS_SCORE
+    assert score(SPELLED, heard) < score(SPELLED, RIGHT)
+
+
+@pytest.mark.parametrize("heard", ["Laporan PPATK.", "Laporan P.P.A.T.K.", "laporan ppatk"])
+def test_short_sentence_with_a_correct_acronym_passes(heard):
+    assert score("Laporan pe pe a te ka.", heard) >= PASS_SCORE
+
+
+def test_acronym_with_its_suffix_glued_on_passes():
+    assert score("ka te pe-nya dipakai tanpa izin.", "KTPnya dipakai tanpa izin.") >= PASS_SCORE
+
+
+def test_takes_that_all_lose_the_acronym_still_rank_by_similarity():
+    near = score("Laporan pe pe a te ka menyebut dana itu.", "Laporan pepe atika menyebut dana itu.")
+    far = score("Laporan pe pe a te ka menyebut dana itu.", "Laporan papa menyebut sesuatu.")
+    assert far < near < PASS_SCORE
+
+
+@pytest.mark.parametrize("expected,heard", [
+    ("Ha ha, tentu saja.", "Haha, tentu saja."),
+    ("E e, tunggu dulu.", "Eh, tunggu dulu."),
+    ("This is going to be a long night.", "This is going to be a long night."),
+])
+def test_interjections_and_plain_words_are_not_acronyms(expected, heard):
+    assert score(expected, heard) >= PASS_SCORE
