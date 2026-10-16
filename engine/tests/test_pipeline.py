@@ -169,6 +169,14 @@ def test_only_a_voice_set_to_accent_letters_reads_accented_acronyms(repo, ready_
     assert (s0["status"], s0["takes"]) == ("done", 1)
 
 
+def test_a_voice_set_to_accent_letters_reads_an_english_sentence_as_written(repo, ready_voice, tmp_path):
+    # In English, letter names are words, as QA treats them: "we be" is not W B.
+    sql(repo, "UPDATE voices SET accent_letters=true WHERE id=%s", (ready_voice["id"],))
+    deps, job = setup(repo, ready_voice, tmp_path, text="Will we be ready by then?")
+    assert run_job(job, deps, should_stop=never) == "done"
+    assert deps.synth.calls == [("Will we be ready by then?", None)]
+
+
 class LazySetupSynth(ToneSynth):
     """Like VoxSynth: setting up the model for a voice (lazy LoRA build, adapter load) takes 0.3 s and happens in
     prepare(), or inside the first generate() when nobody prepared it."""

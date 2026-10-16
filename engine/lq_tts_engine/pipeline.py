@@ -72,8 +72,9 @@ def process_sentence(job: dict, sentence: dict, voice: dict, deps: Deps, should_
     settings = JobSettings(**job["settings"])
     ref = voice_ref(voice)
     language = guess_language(sentence["text"]) or voice.get("language")
-    # What the model reads; every take is still checked against the text as written.
-    spoken = accent_spelled(sentence["text"]) if voice["accent_letters"] else sentence["text"]
+    # What the model reads. As in QA, English letter names are words ("we be"), not an acronym to accent. Every take is
+    # still checked against the text as written.
+    spoken = accent_spelled(sentence["text"]) if voice["accent_letters"] and language != "en" else sentence["text"]
     takes_dir = job_dir(deps.data_dir, job["id"]) / "takes"
     takes_dir.mkdir(parents=True, exist_ok=True)
     sr = deps.synth.sample_rate

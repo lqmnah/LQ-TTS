@@ -10,7 +10,7 @@ from lq_tts_engine.text.spelled import accent_spelled
      "Surat dari ka-pé-pé Pajak Solo datang setelah ka-té-pé-nya dipakai orang lain."),
     ("Laporan pe pe a te ka soal be u em en.", "Laporan pé-pé-a-té-ka soal bé-u-ém-én."),
     ("Anggota de pe er dan be pe je es.", "Anggota dé-pé-ér dan bé-pé-jé-és."),
-    ("Diperiksa o je ka dan Ka Pe Ka, lalu KA PE PE.", "Diperiksa o-jé-ka dan Ka-Pé-Ka, lalu KA-PÉ-PÉ."),
+    ("Diperiksa Ka Pe Ka, o je ka, lalu KA PE PE.", "Diperiksa Ka-Pé-Ka, o-jé-ka, lalu KA-PÉ-PÉ."),
 ])
 def test_spelled_acronyms_become_one_word_of_accented_letter_names(text, spoken):
     assert accent_spelled(text) == spoken
