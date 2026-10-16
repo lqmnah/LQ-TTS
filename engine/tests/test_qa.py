@@ -176,6 +176,14 @@ def test_preposition_before_an_acronym_of_the_same_letters_is_not_the_acronym():
     assert score(expected, "Banjir di Dei Yogyakarta.") < min(PASS_SCORE, right)
 
 
+@pytest.mark.parametrize("expected,heard", [
+    ("Kasus itu ditangani oleh Ka Pe Ka, bukan oleh polisi.", "Kasus itu ditangani olah KPK, bukan oleh polisi."),
+    ("Mereka datang ke o je ka lalu ke bank.", "Mereka datang k OJK lalu ke bank."),
+])
+def test_misheard_word_before_an_acronym_does_not_hide_the_acronym(expected, heard):
+    assert score(expected, heard) >= PASS_SCORE
+
+
 def test_english_be_a_inside_indonesian_keeps_the_plain_comparison():
     assert score("Lo harus berani be a leader, ya.", "Lo harus berani be the leader, ya.", "id") >= PASS_SCORE
 

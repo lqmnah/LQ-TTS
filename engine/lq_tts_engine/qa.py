@@ -36,12 +36,17 @@ def _spelled_runs(text: str) -> list[tuple[list[str], str]]:
     return runs
 
 
+def _letter_forms(run: list[str]) -> set[str]:
+    """How the transcript can write the acronym: its letters, or their slang-normalized form (GW → "gue")."""
+    letters = "".join(LETTER_NAMES[t] for t in run)
+    return {letters, normalize_for_match(letters).replace(" ", "")}
+
+
 def _heard_at(heard: list[str], start: int, run: list[str]) -> tuple[int, int, str] | None:
     """First place at or after `start` where the transcript says `run`: the letter names themselves, or a span of tokens
     joining to the acronym's letters (KTP, "KPK OJK", "PT PLN", K.T.P., GW heard through the slang map as "gue"),
     optionally with a suffix glued on (KTPnya). Returns (first token, end token, suffix)."""
-    letters = "".join(LETTER_NAMES[t] for t in run)
-    forms = {letters, normalize_for_match(letters).replace(" ", "")}
+    forms = _letter_forms(run)
     longest = max(map(len, forms)) + max(map(len, SUFFIXES))
     for k in range(start, len(heard)):
         if heard[k:k + len(run)] == run:
@@ -59,12 +64,15 @@ def _heard_at(heard: list[str], start: int, run: list[str]) -> tuple[int, int, s
 
 def _spell_heard(runs: list[tuple[list[str], str]], heard: list[str]) -> tuple[list[str], bool]:
     """Rewrite each acronym Whisper wrote as letters into the spelling of the text, in order and each place once, so a
-    correct take compares equal. Each run is looked for after the word written before it, so "di DI Yogyakarta" does not
-    take the preposition for DI. Returns the rewritten tokens and whether any acronym was not heard at all."""
+    correct take compares equal. When the word before an acronym looks like it ("di DI Yogyakarta"), the acronym is
+    looked for after that word, so the preposition is not taken for DI. Returns the rewritten tokens and whether any
+    acronym was not heard at all."""
     out, pos, missing = list(heard), 0, False
     for run, before in runs:
-        anchor = next((k for k in range(pos, len(out)) if before and out[k] == before), None)
-        hit = _heard_at(out, pos if anchor is None else anchor + 1, run)
+        start = pos
+        if before in _letter_forms(run):
+            start = next((k + 1 for k in range(pos, len(out)) if out[k] == before), pos)
+        hit = _heard_at(out, start, run)
         if hit is None:
             missing = True
             continue
