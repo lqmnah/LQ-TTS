@@ -1,16 +1,12 @@
 from __future__ import annotations
 
-import re
-
 from .text.numbers import normalize_for_match
-from .text.spelled import LETTER_NAMES, spelled_spans
+from .text.spelled import LETTER_NAMES, WORDS_AND_MARKS, spelled_spans
 
 PASS_SCORE = 0.85
 SUFFIXES = ("nya", "lah", "kah", "pun")  # Whisper glues these onto an acronym: "KTPnya"
 # A take whose transcript lost a spelled acronym never passes, but failing takes keep their order by similarity.
 MISSING_ACRONYM_FACTOR = 0.84
-# The tokens normalize_for_match works on, with punctuation kept: a comma ends a run ("Ka Pe Ka, o je ka" = KPK, OJK).
-_WORDS_AND_MARKS = re.compile(r"[^\W_]+|[^\w\s]")
 
 
 def levenshtein(a: str, b: str) -> int:
@@ -28,7 +24,7 @@ def levenshtein(a: str, b: str) -> int:
 def _spelled_runs(text: str) -> list[tuple[list[str], str]]:
     """Each acronym the text normalizer spelled out (run of letter names, split at punctuation) with the word written
     just before it, normalized like the transcript ("" when there is none)."""
-    tokens = _WORDS_AND_MARKS.findall(text.lower())
+    tokens = WORDS_AND_MARKS.findall(text.lower())
     runs = []
     for start, end in spelled_spans(tokens):
         before = next((t for t in reversed(tokens[:start]) if t.isalnum()), "")

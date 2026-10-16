@@ -20,6 +20,7 @@ from .settings import JobSettings
 from .subs import Cue, to_srt, to_vtt
 from .synth import Synthesizer, VoiceRef
 from .text.lang import guess_language
+from .text.spelled import accent_spelled
 
 log = logging.getLogger("lq_tts_engine.pipeline")
 
@@ -71,6 +72,8 @@ def process_sentence(job: dict, sentence: dict, voice: dict, deps: Deps, should_
     settings = JobSettings(**job["settings"])
     ref = voice_ref(voice)
     language = guess_language(sentence["text"]) or voice.get("language")
+    # What the model reads; every take is still checked against the text as written.
+    spoken = accent_spelled(sentence["text"]) if voice["accent_letters"] else sentence["text"]
     takes_dir = job_dir(deps.data_dir, job["id"]) / "takes"
     takes_dir.mkdir(parents=True, exist_ok=True)
     sr = deps.synth.sample_rate
@@ -80,7 +83,7 @@ def process_sentence(job: dict, sentence: dict, voice: dict, deps: Deps, should_
         if should_stop():
             raise Canceled()
         started = time.monotonic()
-        raw = deps.synth.generate(sentence["text"], ref, sentence["style"])
+        raw = deps.synth.generate(spoken, ref, sentence["style"])
         if len(raw):
             deps.rtf_window.append((time.monotonic() - started) / (len(raw) / sr))
         try:

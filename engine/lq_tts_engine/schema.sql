@@ -22,6 +22,9 @@ CREATE TABLE IF NOT EXISTS voices (
 -- First statement on an existing voices table: its ACCESS EXCLUSIVE lock comes before the index's SHARE lock, so the API
 -- and the worker migrating at once queue up instead of deadlocking on a SHARE -> EXCLUSIVE upgrade.
 ALTER TABLE voices ADD COLUMN IF NOT EXISTS adapter_path text;  -- LoRA adapter dir (lora_voice.py); NULL = base model
+-- true: the model reads spelled acronyms accented, "ka pe pe" -> "ka-pé-pé" (text/spelled.py accent_spelled). Set by
+-- hand (UPDATE voices SET accent_letters = true WHERE id = ...). QA still checks the text as written.
+ALTER TABLE voices ADD COLUMN IF NOT EXISTS accent_letters boolean NOT NULL DEFAULT false;
 CREATE INDEX IF NOT EXISTS voices_owner ON voices (caller, owner_ref) WHERE deleted_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS jobs (

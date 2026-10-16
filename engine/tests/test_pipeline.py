@@ -12,9 +12,9 @@ from tests.fakes import FakeTranscriber, ToneSynth
 TEXT = "Kalimat pertama di sini. Kalimat kedua di sini.\n\nParagraf baru mulai sekarang."
 
 
-def setup(repo, voice, tmp_path, settings=None, scripted=None, synth=None):
-    units = split_script(TEXT)
-    repo.create_job(caller="lq-tts", voice_id=voice["id"], text=TEXT, settings=settings or {}, callback_url=None,
+def setup(repo, voice, tmp_path, settings=None, scripted=None, synth=None, text=TEXT):
+    units = split_script(text)
+    repo.create_job(caller="lq-tts", voice_id=voice["id"], text=text, settings=settings or {}, callback_url=None,
                     idempotency_key=None, units=units)
     deps = Deps(repo=repo, synth=synth or ToneSynth(),
                 asr=FakeTranscriber(sentence_texts={u.idx: u.text for u in units}, scripted=scripted),
@@ -152,6 +152,21 @@ def test_voice_adapter_reaches_the_synthesizer(repo, ready_voice, tmp_path):
     deps, job = setup(repo, ready_voice, tmp_path)
     assert run_job(job, deps, should_stop=never) == "done"
     assert {v.adapter_path for v in deps.synth.voices} == {"/adapters/abysa"}
+
+
+@pytest.mark.parametrize("accent, spoken", [
+    (False, "Surat dari ka pe pe datang setelah ka te pe-nya dipakai."),
+    (True, "Surat dari ka-pé-pé datang setelah ka-té-pé-nya dipakai."),
+])
+def test_only_a_voice_set_to_accent_letters_reads_accented_acronyms(repo, ready_voice, tmp_path, accent, spoken):
+    sql(repo, "UPDATE voices SET accent_letters=%s WHERE id=%s", (accent, ready_voice["id"]))
+    deps, job = setup(repo, ready_voice, tmp_path, text="Surat dari ka pe pe datang setelah ka te pe-nya dipakai.",
+                      scripted={0: ["Surat dari KPP datang setelah KTPnya dipakai."]})
+    assert run_job(job, deps, should_stop=never) == "done"
+    assert deps.synth.calls == [(spoken, None)]
+    # QA checks the take against the text as written, which it knows as KPP and KTP: the right take passes at once.
+    s0 = repo.get_sentence(job["id"], 0)
+    assert (s0["status"], s0["takes"]) == ("done", 1)
 
 
 class LazySetupSynth(ToneSynth):

@@ -92,9 +92,10 @@ def test_concurrent_same_idempotency_key_returns_one_job(repo, ready_voice):
     assert sql(repo, "SELECT count(*) AS n FROM jobs WHERE idempotency_key='race'").fetchone()["n"] == 1
 
 
-def test_migrate_adds_adapter_path_to_an_existing_voices_table(repo, ready_voice):
+def test_migrate_adds_the_new_voice_columns_to_an_existing_voices_table(repo, ready_voice):
     schema = sql(repo, "SELECT current_schema() AS s").fetchone()["s"]
-    sql(repo, "ALTER TABLE voices DROP COLUMN adapter_path")  # the table as PROD has it before this release
+    # The table as PROD had it before the LoRA and accent-letters releases.
+    sql(repo, "ALTER TABLE voices DROP COLUMN adapter_path, DROP COLUMN accent_letters")
     migrate(test_database_url(), schema)
     v = repo.get_voice_any(ready_voice["id"])
-    assert (v["status"], v["adapter_path"]) == ("ready", None)
+    assert (v["status"], v["adapter_path"], v["accent_letters"]) == ("ready", None, False)
