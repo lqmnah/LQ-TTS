@@ -77,6 +77,8 @@ def test_score_is_bounded():
     ("Tiap kali lo buka notifikasi, otak lo butuh waktu buat balik lagi ke kerjaan yang tadi.", "id"),
     ("This is the part where you decide what to do with your time.", "en"),
     ("Halo!", None),
+    ("Harga be be em naik.", None),  # spelled BBM is not English "be"
+    ("Kepala be pe es dan be em ka ge hadir.", "id"),
 ])
 def test_guess_language(text, lang):
     assert guess_language(text) == lang
@@ -165,3 +167,19 @@ def test_adjacent_split_and_slang_shaped_acronyms_pass(expected, heard):
 
 def test_english_letter_name_words_keep_the_plain_comparison():
     assert score("I want to be a doctor someday.", "I want to be the doctor someday.", "en") >= PASS_SCORE
+
+
+def test_preposition_before_an_acronym_of_the_same_letters_is_not_the_acronym():
+    expected = "Banjir di de i yogyakarta."
+    right = score(expected, "Banjir di DI Yogyakarta.")
+    assert right >= PASS_SCORE
+    assert score(expected, "Banjir di Dei Yogyakarta.") < min(PASS_SCORE, right)
+
+
+def test_english_be_a_inside_indonesian_keeps_the_plain_comparison():
+    assert score("Lo harus berani be a leader, ya.", "Lo harus berani be the leader, ya.", "id") >= PASS_SCORE
+
+
+def test_short_sentence_with_a_b_acronym_gets_the_acronym_check():
+    expected = "Harga be be em naik."
+    assert score(expected, "Harga BBM naik.", guess_language(expected)) >= PASS_SCORE

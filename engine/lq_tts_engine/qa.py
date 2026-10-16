@@ -3,16 +3,10 @@ from __future__ import annotations
 import re
 
 from .text.numbers import normalize_for_match
+from .text.spelled import LETTER_NAMES, spelled_spans
 
 PASS_SCORE = 0.85
-# Letter names the text normalizers (LQ-Studio normalizeIndonesianText, the LQ Journal dictionary) spell acronyms with:
-# "KTP" → "ka te pe". Whisper writes the same speech as letters, so QA compares the two forms through this table.
-LETTER_NAMES = {"a": "a", "be": "b", "ce": "c", "de": "d", "e": "e", "ef": "f", "ge": "g", "ha": "h", "i": "i",
-                "je": "j", "ka": "k", "el": "l", "em": "m", "en": "n", "o": "o", "pe": "p", "ki": "q", "er": "r",
-                "es": "s", "te": "t", "u": "u", "ve": "v", "fe": "v", "we": "w", "eks": "x", "ye": "y", "zet": "z"}
 SUFFIXES = ("nya", "lah", "kah", "pun")  # Whisper glues these onto an acronym: "KTPnya"
-# Runs made only of these are interjections ("ha ha", "e e"), not acronyms; they keep the plain comparison.
-INTERJECTION_NAMES = frozenset({"a", "e", "i", "o", "u", "ha"})
 # A take whose transcript lost a spelled acronym never passes, but failing takes keep their order by similarity.
 MISSING_ACRONYM_FACTOR = 0.84
 # The tokens normalize_for_match works on, with punctuation kept: a comma ends a run ("Ka Pe Ka, o je ka" = KPK, OJK).
@@ -31,16 +25,14 @@ def levenshtein(a: str, b: str) -> int:
     return previous[-1]
 
 
-def _spelled_runs(text: str) -> list[list[str]]:
-    """Runs of two or more letter names, split at punctuation: acronyms the text normalizer spelled out."""
-    runs, run = [], []
-    for token in _WORDS_AND_MARKS.findall(text.lower()) + [""]:
-        if token in LETTER_NAMES:
-            run.append(token)
-            continue
-        if len(run) >= 2 and not set(run) <= INTERJECTION_NAMES:
-            runs.append(run)
-        run = []
+def _spelled_runs(text: str) -> list[tuple[list[str], str]]:
+    """Each acronym the text normalizer spelled out (run of letter names, split at punctuation) with the word written
+    just before it, normalized like the transcript ("" when there is none)."""
+    tokens = _WORDS_AND_MARKS.findall(text.lower())
+    runs = []
+    for start, end in spelled_spans(tokens):
+        before = next((t for t in reversed(tokens[:start]) if t.isalnum()), "")
+        runs.append((tokens[start:end], normalize_for_match(before)))
     return runs
 
 
@@ -65,12 +57,14 @@ def _heard_at(heard: list[str], start: int, run: list[str]) -> tuple[int, int, s
     return None
 
 
-def _spell_heard(runs: list[list[str]], heard: list[str]) -> tuple[list[str], bool]:
+def _spell_heard(runs: list[tuple[list[str], str]], heard: list[str]) -> tuple[list[str], bool]:
     """Rewrite each acronym Whisper wrote as letters into the spelling of the text, in order and each place once, so a
-    correct take compares equal. Returns the rewritten tokens and whether any acronym was not heard at all."""
+    correct take compares equal. Each run is looked for after the word written before it, so "di DI Yogyakarta" does not
+    take the preposition for DI. Returns the rewritten tokens and whether any acronym was not heard at all."""
     out, pos, missing = list(heard), 0, False
-    for run in runs:
-        hit = _heard_at(out, pos, run)
+    for run, before in runs:
+        anchor = next((k for k in range(pos, len(out)) if before and out[k] == before), None)
+        hit = _heard_at(out, pos if anchor is None else anchor + 1, run)
         if hit is None:
             missing = True
             continue
