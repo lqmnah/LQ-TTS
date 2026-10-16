@@ -90,7 +90,7 @@ def process_sentence(job: dict, sentence: dict, voice: dict, deps: Deps, should_
         path = takes_dir / f"s{sentence['idx']:04d}_r{job['revision']}_t{take_no}.wav"
         sf.write(path, audio, sr, subtype="FLOAT")
         heard = " ".join(w.text for w in deps.asr.transcribe(path, language).words)
-        take_score = score(sentence["text"], heard)
+        take_score = score(sentence["text"], heard, language)
         if best is None or take_score > best[0]:
             best = (take_score, path, heard, len(audio) / sr)
         if take_score >= PASS_SCORE:

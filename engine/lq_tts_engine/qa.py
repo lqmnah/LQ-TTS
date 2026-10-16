@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from .text.numbers import normalize_for_match
 
 PASS_SCORE = 0.85
@@ -13,6 +15,8 @@ SUFFIXES = ("nya", "lah", "kah", "pun")  # Whisper glues these onto an acronym: 
 INTERJECTION_NAMES = frozenset({"a", "e", "i", "o", "u", "ha"})
 # A take whose transcript lost a spelled acronym never passes, but failing takes keep their order by similarity.
 MISSING_ACRONYM_FACTOR = 0.84
+# The tokens normalize_for_match works on, with punctuation kept: a comma ends a run ("Ka Pe Ka, o je ka" = KPK, OJK).
+_WORDS_AND_MARKS = re.compile(r"[^\W_]+|[^\w\s]")
 
 
 def levenshtein(a: str, b: str) -> int:
@@ -27,50 +31,61 @@ def levenshtein(a: str, b: str) -> int:
     return previous[-1]
 
 
-def _spelled_runs(tokens: list[str]) -> list[list[str]]:
-    """Runs of two or more letter names: acronyms the text normalizer spelled out."""
-    runs, i = [], 0
-    while i < len(tokens):
-        j = i
-        while j < len(tokens) and tokens[j] in LETTER_NAMES:
-            j += 1
-        if j - i >= 2 and not set(tokens[i:j]) <= INTERJECTION_NAMES:
-            runs.append(tokens[i:j])
-        i = max(j, i + 1)
+def _spelled_runs(text: str) -> list[list[str]]:
+    """Runs of two or more letter names, split at punctuation: acronyms the text normalizer spelled out."""
+    runs, run = [], []
+    for token in _WORDS_AND_MARKS.findall(text.lower()) + [""]:
+        if token in LETTER_NAMES:
+            run.append(token)
+            continue
+        if len(run) >= 2 and not set(run) <= INTERJECTION_NAMES:
+            runs.append(run)
+        run = []
     return runs
 
 
-def _find(tokens: list[str], seq: list[str]) -> int | None:
-    return next((k for k in range(len(tokens) - len(seq) + 1) if tokens[k:k + len(seq)] == seq), None)
+def _heard_at(heard: list[str], start: int, run: list[str]) -> tuple[int, int, str] | None:
+    """First place at or after `start` where the transcript says `run`: the letter names themselves, or a span of tokens
+    joining to the acronym's letters (KTP, "KPK OJK", "PT PLN", K.T.P., GW heard through the slang map as "gue"),
+    optionally with a suffix glued on (KTPnya). Returns (first token, end token, suffix)."""
+    letters = "".join(LETTER_NAMES[t] for t in run)
+    forms = {letters, normalize_for_match(letters).replace(" ", "")}
+    longest = max(map(len, forms)) + max(map(len, SUFFIXES))
+    for k in range(start, len(heard)):
+        if heard[k:k + len(run)] == run:
+            return k, k + len(run), ""
+        joined = ""
+        for m in range(k, len(heard)):
+            joined += heard[m]
+            if len(joined) > longest:
+                break
+            for form in forms:
+                if joined == form or (joined.startswith(form) and joined[len(form):] in SUFFIXES):
+                    return k, m + 1, joined[len(form):]
+    return None
 
 
 def _spell_heard(runs: list[list[str]], heard: list[str]) -> tuple[list[str], bool]:
-    """Rewrite each spelled acronym Whisper wrote as letters (KTP, KTPnya, K.T.P.) into the spelling of the text, so a
+    """Rewrite each acronym Whisper wrote as letters into the spelling of the text, in order and each place once, so a
     correct take compares equal. Returns the rewritten tokens and whether any acronym was not heard at all."""
-    out, missing = list(heard), False
+    out, pos, missing = list(heard), 0, False
     for run in runs:
-        letters = "".join(LETTER_NAMES[t] for t in run)
-        if _find(out, run) is not None:
+        hit = _heard_at(out, pos, run)
+        if hit is None:
+            missing = True
             continue
-        k = next((k for k, t in enumerate(out)
-                  if t == letters or (t.startswith(letters) and t[len(letters):] in SUFFIXES)), None)
-        if k is not None:
-            rest = out[k][len(letters):]
-            out[k:k + 1] = run + ([rest] if rest else [])
-            continue
-        k = _find(out, list(letters))
-        if k is not None:
-            out[k:k + len(letters)] = run
-            continue
-        missing = True
+        k, end, suffix = hit
+        out[k:end] = run + ([suffix] if suffix else [])
+        pos = k + len(run) + (1 if suffix else 0)
     return out, missing
 
 
-def score(expected: str, heard: str) -> float:
+def score(expected: str, heard: str, language: str | None = None) -> float:
     a, b = normalize_for_match(expected), normalize_for_match(heard)
     if not a and not b:
         return 1.0
-    runs = _spelled_runs(a.split())
+    # Spelled acronyms come from the Indonesian normalizers; in English, letter names are words ("to be a").
+    runs = _spelled_runs(expected) if language != "en" else []
     missing = False
     if runs:
         tokens, missing = _spell_heard(runs, b.split())

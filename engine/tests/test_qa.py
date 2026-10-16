@@ -140,3 +140,28 @@ def test_takes_that_all_lose_the_acronym_still_rank_by_similarity():
 ])
 def test_interjections_and_plain_words_are_not_acronyms(expected, heard):
     assert score(expected, heard) >= PASS_SCORE
+
+
+def test_repeated_acronym_heard_twice_passes():
+    assert score("ka te pe lama dan ka te pe baru.", "KTP lama dan KTP baru.") >= PASS_SCORE
+
+
+def test_repeated_acronym_heard_once_fails_below_the_right_take():
+    expected = "Pemilik ka te pe wajib membawa ka te pe asli."
+    lost = score(expected, "Pemilik KTP wajib membawa kartu asli.")
+    assert lost < PASS_SCORE and lost < score(expected, "Pemilik KTP wajib membawa KTP asli.")
+
+
+@pytest.mark.parametrize("expected,heard", [
+    ("Ka Pe Ka, o je ka, dan pe pe a te ka hadir.", "KPK, OJK, dan PPATK hadir."),
+    ("Tagihan pe te pe el en naik.", "Tagihan PT PLN naik."),
+    ("Pasal itu ada di u u i te e.", "Pasal itu ada di UU ITE."),
+    ("O, Ka Pe Ka sudah datang.", "Oh, KPK sudah datang."),
+    ("Kapasitas pembangkit itu satu ge we.", "Kapasitas pembangkit itu 1 GW."),
+])
+def test_adjacent_split_and_slang_shaped_acronyms_pass(expected, heard):
+    assert score(expected, heard) >= PASS_SCORE
+
+
+def test_english_letter_name_words_keep_the_plain_comparison():
+    assert score("I want to be a doctor someday.", "I want to be the doctor someday.", "en") >= PASS_SCORE
